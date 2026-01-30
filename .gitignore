@@ -1,0 +1,53 @@
+# Build and packaging
+/build_cmake/
+/dist/
+/temp_test/
+/cleanup_quarantine/
+
+# Compiled object files and libraries
+*.o
+*.obj
+*.lo
+*.a
+*.lib
+
+# Executables and dynamic libraries
+*.exe
+*.dll
+*.so
+*.dylib
+
+# CMake files
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# Visual Studio / IDE
+*.sln
+*.vcxproj*
+*.user
+*.vcxproj.filters
+.vs/
+.vscode/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+*~
+
+# Archives
+*.zip
+*.tar.gz
+
+# Node
+node_modules/
+
+# Python
+__pycache__/
+*.pyc
