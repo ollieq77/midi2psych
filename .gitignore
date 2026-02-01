@@ -51,3 +51,7 @@ node_modules/
 # Python
 __pycache__/
 *.pyc
+
+# Installer Files
+Output/
+Output/*

@@ -47,6 +47,12 @@ g++ -std=c++17 ^
     "%SRC_FILE%" ^
     -lcomctl32 -lcomdlg32 -lgdi32 -lshell32
 
+:: Copy over LICENCE.rtf and README.html into the dist folder in subfolder DOCUMENTS
+set DOCS_DIR=%OUT_DIR%\DOCUMENTS
+if not exist "%DOCS_DIR%" mkdir "%DOCS_DIR%"
+copy "%REPO_ROOT%LICENSE.rtf" "%DOCS_DIR%\LICENSE.rtf"
+copy "%REPO_ROOT%README.html" "%DOCS_DIR%\README.html"
+
 if %ERRORLEVEL% equ 0 (
     echo.
     echo ========================================

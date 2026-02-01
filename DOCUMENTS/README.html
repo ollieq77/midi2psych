@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MIDI to Psych Engine Converter - README</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+            line-height: 1.6;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            overflow: hidden;
+        }
+        
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px 30px;
+            text-align: center;
+        }
+        
+        header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
+        }
+        
+        header p {
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+        
+        .content {
+            padding: 40px;
+        }
+        
+        h2 {
+            color: #667eea;
+            margin-top: 30px;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #667eea;
+            font-size: 1.8em;
+        }
+        
+        h2:first-child {
+            margin-top: 0;
+        }
+        
+        h3 {
+            color: #764ba2;
+            margin-top: 20px;
+            margin-bottom: 10px;
+            font-size: 1.3em;
+        }
+        
+        p {
+            margin-bottom: 15px;
+            color: #555;
+        }
+        
+        ul, ol {
+            margin-left: 25px;
+            margin-bottom: 15px;
+        }
+        
+        li {
+            margin-bottom: 8px;
+            color: #555;
+        }
+        
+        code {
+            background: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            color: #e83e8c;
+            font-size: 0.9em;
+        }
+        
+        .code-block {
+            background: #2d2d2d;
+            color: #f8f8f2;
+            padding: 20px;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 15px 0;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.9em;
+            line-height: 1.5;
+        }
+        
+        .feature-box {
+            background: #f8f9fa;
+            border-left: 4px solid #667eea;
+            padding: 15px 20px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+        
+        .warning-box {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px 20px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+        
+        .tip-box {
+            background: #d1ecf1;
+            border-left: 4px solid #17a2b8;
+            padding: 15px 20px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background: white;
+        }
+        
+        th {
+            background: #667eea;
+            color: white;
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+        }
+        
+        td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        tr:hover {
+            background: #f8f9fa;
+        }
+        
+        .button {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            padding: 10px 20px;
+            text-decoration: none;
+            border-radius: 5px;
+            margin: 5px;
+            transition: background 0.3s;
+        }
+        
+        .button:hover {
+            background: #764ba2;
+        }
+        
+        footer {
+            background: #2d2d2d;
+            color: white;
+            text-align: center;
+            padding: 20px;
+            font-size: 0.9em;
+        }
+        
+        .version {
+            display: inline-block;
+            background: #764ba2;
+            color: white;
+            padding: 5px 15px;
+            border-radius: 20px;
+            font-size: 0.9em;
+            margin-left: 10px;
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                margin: 10px;
+            }
+            
+            .content {
+                padding: 20px;
+            }
+            
+            header h1 {
+                font-size: 1.8em;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎵 MIDI to Psych Engine Converter</h1>
+            <p>Convert MIDI files to FNF Psych Engine chart format</p>
+            <span class="version">v2.1</span>
+        </header>
+        
+        <div class="content">
+            <h2>📖 What is this?</h2>
+            <p>
+                MIDI to Psych Engine Converter is a tool that transforms MIDI files into chart files compatible with 
+                Friday Night Funkin' Psych Engine. It features both a graphical interface for easy use and a 
+                command-line interface for advanced users and automation.
+            </p>
+            
+            <div class="feature-box">
+                <h3>✨ Key Features</h3>
+                <ul>
+                    <li><strong>Dual Interface:</strong> GUI for beginners, CLI for power users</li>
+                    <li><strong>Two-Track Support:</strong> Separate MIDI files for Player 1 and Player 2</li>
+                    <li><strong>Tempo Change Detection:</strong> Automatically handles BPM changes</li>
+                    <li><strong>Sustain Notes:</strong> Optional support for hold notes</li>
+                    <li><strong>Customizable Output:</strong> Configure song metadata, characters, and timing</li>
+                    <li><strong>High Precision:</strong> Adjustable decimal precision for note timing</li>
+                    <li><strong>Real-time Progress:</strong> Visual feedback during conversion</li>
+                </ul>
+            </div>
+            
+            <h2>🚀 Getting Started</h2>
+            
+            <h3>GUI Mode (Recommended for Beginners)</h3>
+            <ol>
+                <li>Double-click <code>midi2psych.exe</code> to launch the GUI</li>
+                <li>Click "Browse..." to select your Player 1 MIDI file</li>
+                <li>Click "Browse..." to select your Player 2 MIDI file</li>
+                <li>Choose where to save the output JSON file</li>
+                <li>Configure your chart settings (optional)</li>
+                <li>Click "CONVERT" and wait for completion</li>
+            </ol>
+            
+            <h3>CLI Mode (For Advanced Users)</h3>
+            <p>Open Command Prompt or Terminal in the folder containing <code>midi2psych.exe</code> and run:</p>
+            <div class="code-block">
+midi2psych.exe player1.mid player2.mid output.json [options]
+            </div>
+            
+            <h2>⚙️ Settings Explained</h2>
+            
+            <table>
+                <thead>
+                    <tr>
+                        <th>Setting</th>
+                        <th>Description</th>
+                        <th>Default</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><strong>Song Name</strong></td>
+                        <td>The name that appears in-game</td>
+                        <td>Converted</td>
+                    </tr>
+                    <tr>
+                        <td><strong>BPM Multiplier</strong></td>
+                        <td>Multiply the detected BPM (useful for speed changes)</td>
+                        <td>1.0</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Speed</strong></td>
+                        <td>Note scroll speed in Psych Engine</td>
+                        <td>2.5</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Offset (ms)</strong></td>
+                        <td>Shift all notes forward or backward in time</td>
+                        <td>0</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Min Velocity</strong></td>
+                        <td>Ignore MIDI notes quieter than this (0-127)</td>
+                        <td>0</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Precision</strong></td>
+                        <td>Number of decimal places for note timing</td>
+                        <td>6</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Sustain Notes</strong></td>
+                        <td>Convert MIDI note duration to hold notes</td>
+                        <td>Off</td>
+                    </tr>
+                    <tr>
+                        <td><strong>High Precision</strong></td>
+                        <td>Use decimal timing instead of rounding</td>
+                        <td>On</td>
+                    </tr>
+                    <tr>
+                        <td><strong>P1/P2 Char</strong></td>
+                        <td>Character names for each player</td>
+                        <td>bf / dad</td>
+                    </tr>
+                    <tr>
+                        <td><strong>GF Char</strong></td>
+                        <td>Girlfriend character name</td>
+                        <td>gf</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Stage</strong></td>
+                        <td>Stage/background name</td>
+                        <td>stage</td>
+                    </tr>
+                </tbody>
+            </table>
+            
+            <h2>🎹 MIDI Preparation Tips</h2>
+            
+            <div class="tip-box">
+                <h3>💡 Getting the Best Results</h3>
+                <ul>
+                    <li><strong>Note Mapping:</strong> The converter uses note number modulo 4 for lanes (0-3 = left, down, up, right)</li>
+                    <li><strong>Separate Tracks:</strong> Use separate MIDI files for each player's chart</li>
+                    <li><strong>Clean Your MIDI:</strong> Remove unnecessary tracks, controller data, and silence</li>
+                    <li><strong>Tempo Map:</strong> Include tempo changes in your MIDI if the song changes speed</li>
+                    <li><strong>Test in DAW:</strong> Preview your MIDI in a DAW to verify it sounds correct before converting</li>
+                </ul>
+            </div>
+            
+            <div class="warning-box">
+                <h3>⚠️ Common Issues</h3>
+                <ul>
+                    <li><strong>Missing Notes:</strong> Check your Min Velocity setting if notes are missing</li>
+                    <li><strong>Wrong Timing:</strong> Adjust the Offset setting if all notes are early/late</li>
+                    <li><strong>Wrong Speed:</strong> Use BPM Multiplier if the chart plays too fast or slow</li>
+                    <li><strong>File Won't Load:</strong> Make sure your MIDI files are valid and not corrupted</li>
+                    <li><strong>Notes Are Different Types:</strong> Make sure all your notes are on Track 1</li>
+                </ul>
+            </div>
+            
+            <h2>💻 Command-Line Options</h2>
+            
+            <table>
+                <thead>
+                    <tr>
+                        <th>Option</th>
+                        <th>Description</th>
+                        <th>Example</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><code>-s, --song</code></td>
+                        <td>Set song name</td>
+                        <td><code>--song "My Song"</code></td>
+                    </tr>
+                    <tr>
+                        <td><code>-b, --bpm</code></td>
+                        <td>BPM multiplier</td>
+                        <td><code>--bpm 1.5</code></td>
+                    </tr>
+                    <tr>
+                        <td><code>-o, --offset</code></td>
+                        <td>Note offset in ms</td>
+                        <td><code>--offset -50</code></td>
+                    </tr>
+                    <tr>
+                        <td><code>-v, --velocity</code></td>
+                        <td>Minimum velocity</td>
+                        <td><code>--velocity 20</code></td>
+                    </tr>
+                    <tr>
+                        <td><code>-p, --precision</code></td>
+                        <td>Decimal places</td>
+                        <td><code>--precision 4</code></td>
+                    </tr>
+                    <tr>
+                        <td><code>--sustain</code></td>
+                        <td>Enable sustain notes</td>
+                        <td><code>--sustain</code></td>
+                    </tr>
+                    <tr>
+                        <td><code>--no-precision</code></td>
+                        <td>Round note times</td>
+                        <td><code>--no-precision</code></td>
+                    </tr>
+                    <tr>
+                        <td><code>--speed</code></td>
+                        <td>Scroll speed</td>
+                        <td><code>--speed 3.0</code></td>
+                    </tr>
+                    <tr>
+                        <td><code>--p1</code></td>
+                        <td>Player 1 character</td>
+                        <td><code>--p1 pico</code></td>
+                    </tr>
+                    <tr>
+                        <td><code>--p2</code></td>
+                        <td>Player 2 character</td>
+                        <td><code>--p2 monster</code></td>
+                    </tr>
+                    <tr>
+                        <td><code>--gf</code></td>
+                        <td>GF character</td>
+                        <td><code>--gf gf-christmas</code></td>
+                    </tr>
+                    <tr>
+                        <td><code>--stage</code></td>
+                        <td>Stage name</td>
+                        <td><code>--stage spooky</code></td>
+                    </tr>
+                </tbody>
+            </table>
+            
+            <h3>Example Commands</h3>
+            <div class="code-block">
+# Basic conversion
+midi2psych.exe vocals.mid inst.mid chart.json
+
+# With custom song name and BPM
+midi2psych.exe p1.mid p2.mid output.json --song "Epic Song" --bpm 1.2
+
+# With sustain notes and custom characters
+midi2psych.exe bf.mid dad.mid chart.json --sustain --p1 bf --p2 monster
+
+# Full customization
+midi2psych.exe player1.mid player2.mid mysong.json --song "My Song" --bpm 1.0 --offset -30 --velocity 10 --precision 4 --speed 3.5 --sustain --p1 pico --p2 tankman --stage military
+            </div>
+            
+            <h2>📂 Output Format</h2>
+            <p>
+                The converter generates a JSON file compatible with Psych Engine. To use it:
+            </p>
+            <ol>
+                <li>Place the JSON file in your Psych Engine mod's <code>data/[songname]/</code> folder</li>
+                <li>Name it according to the difficulty (e.g., <code>[songname]-hard.json</code>, <code>[songname].json</code>, <code>[songname]-easy.json</code>)</li>
+                <li>Make sure you have the corresponding audio files in <code>songs/[songname]/</code></li>
+                <li>Load your mod in Psych Engine and test!</li>
+            </ol>
+            
+            <h2>🛠️ Troubleshooting</h2>
+            
+            <h3>Program Won't Start</h3>
+            <ul>
+                <li>Make sure all DLL files are in the same folder as the exe</li>
+                <li>Install the Visual C++ Redistributable if prompted</li>
+                <li>Try running as administrator</li>
+            </ul>
+            
+            <h3>Conversion Errors</h3>
+            <ul>
+                <li>Check the console output for specific error messages</li>
+                <li>Verify your MIDI files are valid and not corrupted</li>
+                <li>Try opening the MIDI in a music program to confirm it works</li>
+                <li>Make sure the output path is writable</li>
+            </ul>
+            
+            <h3>Chart Issues in Game</h3>
+            <ul>
+                <li>Verify the JSON file is properly formatted (check for syntax errors)</li>
+                <li>Confirm the file is in the correct folder</li>
+                <li>Check that audio files match the chart name</li>
+                <li>Try adjusting the offset if notes are consistently early/late</li>
+            </ul>
+            
+            <h2>❓ FAQ</h2>
+            
+            <h3>Can I use the same MIDI for both players?</h3>
+            <p>
+                Yes, but it will duplicate the chart. For best results, create separate MIDI files with different patterns for each player.
+            </p>
+            
+            <h3>Why are some notes missing?</h3>
+            <p>
+                This is usually due to the Min Velocity filter. MIDI notes with velocity below your threshold are ignored. Try setting Min Velocity to 0.
+            </p>
+            
+            <h3>Can I convert multiple difficulties at once?</h3>
+            <p>
+                Not directly, but you can run the converter multiple times with different settings (like BPM multiplier or note offset) to create multiple difficulty levels.
+            </p>
+            
+            <h3>Does this work with other FNF engines?</h3>
+            <p>
+                It's specifically designed for Psych Engine. Other engines may have different JSON formats and might not work correctly.
+            </p>
+            
+            <h3>How do I map specific MIDI notes to specific lanes?</h3>
+            <p>
+                The converter uses <code>note % 4</code> to determine lanes. So MIDI notes 0, 4, 8, 12... map to lane 0 (left), notes 1, 5, 9, 13... map to lane 1 (down), etc.
+            </p>
+            
+            <h2>📝 Technical Details</h2>
+            
+            <h3>How It Works</h3>
+            <ol>
+                <li><strong>Parse MIDI:</strong> Reads both MIDI files and extracts note events and tempo changes</li>
+                <li><strong>Convert Timing:</strong> Converts MIDI ticks to milliseconds using PPQ and BPM data</li>
+                <li><strong>Map Notes:</strong> Maps MIDI note numbers to FNF lanes (0-3 for P1, 4-7 for P2)</li>
+                <li><strong>Create Sections:</strong> Divides the chart into sections based on timing and BPM changes</li>
+                <li><strong>Determine Must-Hit:</strong> Decides which sections are "must hit" based on note distribution</li>
+                <li><strong>Generate JSON:</strong> Outputs a Psych Engine compatible JSON structure</li>
+            </ol>
+            
+            <h3>System Requirements</h3>
+            <ul>
+                <li>Windows 7 SP1 or later (64-bit)</li>
+                <li>50 MB free disk space</li>
+                <li>Visual C++ Redistributable (usually pre-installed)</li>
+            </ul>
+            
+            <h2>📄 License & Credits</h2>
+            <p>
+                This software is provided as-is for the Friday Night Funkin' modding community. 
+                Feel free to use, modify, and share!
+            </p>
+            
+            <div class="feature-box">
+                <p><strong>Made with ❤️ for the FNF community</strong></p>
+                <p>If you found this tool useful, consider sharing it with other modders!</p>
+            </div>
+        </div>
+        
+        <footer>
+            <p>MIDI to Psych Engine Converter v2.1</p>
+            <p>For Friday Night Funkin' Psych Engine</p>
+        </footer>
+    </div>
+</body>
+</html>
