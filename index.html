@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Midi2Psych - MIDI to FNF Chart Converter</title>
+    <link href="https://fonts.googleapis.com/css2?family=Lexend:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #f5f5f7;
+            color: #1d1d1f;
+            font-family: 'Lexend', sans-serif;
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        header {
+            text-align: center;
+            padding: 80px 20px 60px;
+        }
+
+        h1 {
+            font-size: clamp(2.5rem, 6vw, 4.5rem);
+            font-weight: 700;
+            margin-bottom: 15px;
+            color: #1d1d1f;
+            letter-spacing: -0.02em;
+        }
+
+        .version-badge {
+            display: inline-block;
+            background: #007aff;
+            color: white;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+
+        .tagline {
+            font-size: 1.3rem;
+            color: #6e6e73;
+            margin-top: 15px;
+            font-weight: 400;
+        }
+
+        .download-section {
+            background: linear-gradient(135deg, #007aff 0%, #5856d6 100%);
+            padding: 50px 40px;
+            border-radius: 16px;
+            text-align: center;
+            margin: 40px 0 60px;
+            box-shadow: 0 4px 20px rgba(0, 122, 255, 0.2);
+        }
+
+        .download-section h2 {
+            font-size: 2rem;
+            color: white;
+            margin-bottom: 20px;
+            font-weight: 600;
+        }
+
+        .btn {
+            display: inline-block;
+            background: white;
+            color: #007aff;
+            padding: 16px 40px;
+            border-radius: 12px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            text-decoration: none;
+            transition: all 0.2s ease;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+        }
+
+        .meta {
+            color: rgba(255, 255, 255, 0.8);
+            margin-top: 15px;
+            font-size: 0.9rem;
+        }
+
+        .features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 24px;
+            margin-bottom: 60px;
+        }
+
+        .feature-card {
+            background: white;
+            padding: 32px;
+            border-radius: 16px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+            transition: all 0.3s ease;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
+        }
+
+        .feature-card h3 {
+            font-size: 1.4rem;
+            margin-bottom: 12px;
+            color: #1d1d1f;
+            font-weight: 600;
+        }
+
+        .feature-card p {
+            color: #6e6e73;
+            line-height: 1.6;
+        }
+
+        .icon {
+            font-size: 2.5rem;
+            margin-bottom: 16px;
+        }
+
+        .specs {
+            background: white;
+            border-radius: 16px;
+            padding: 40px;
+            margin-bottom: 60px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+        }
+
+        .specs h2 {
+            font-size: 2rem;
+            margin-bottom: 30px;
+            color: #1d1d1f;
+            font-weight: 600;
+        }
+
+        .specs-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 30px;
+        }
+
+        .spec-item h4 {
+            font-size: 1.1rem;
+            color: #007aff;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+
+        .spec-item p {
+            color: #6e6e73;
+            line-height: 1.5;
+        }
+
+        .code-example {
+            background: #1d1d1f;
+            color: #f5f5f7;
+            padding: 30px;
+            border-radius: 12px;
+            margin-bottom: 60px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.95rem;
+            overflow-x: auto;
+            line-height: 1.8;
+        }
+
+        .code-example .comment {
+            color: #8e8e93;
+        }
+
+        .code-example .command {
+            color: #30d158;
+        }
+
+        .code-example .flag {
+            color: #bf5af2;
+        }
+
+        footer {
+            text-align: center;
+            padding: 40px 20px;
+            color: #6e6e73;
+            font-size: 0.9rem;
+        }
+
+        @media (max-width: 768px) {
+            header {
+                padding: 60px 20px 40px;
+            }
+
+            .download-section {
+                padding: 40px 20px;
+            }
+
+            h1 {
+                font-size: 2.5rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Midi2Psych<span class="version-badge">v2.1</span></h1>
+            <p class="tagline">Convert MIDI files to FNF Psych Engine charts</p>
+        </header>
+
+        <div class="download-section">
+            <h2>Download for Windows</h2>
+            <a href="#" class="btn">Download Now</a>
+            <p class="meta">Version 2.1 • Windows 64-bit • 10 MB • Free & Open Source</p>
+        </div>
+
+        <div class="features">
+            <div class="feature-card">
+                <div class="icon">🎹</div>
+                <h3>Easy to Use</h3>
+                <p>Simple GUI interface for beginners, powerful CLI for advanced users. Load your MIDI files, configure settings, and export your chart in seconds.</p>
+            </div>
+
+            <div class="feature-card">
+                <div class="icon">⚡</div>
+                <h3>Smart Conversion</h3>
+                <p>Automatically detects tempo changes and handles complex MIDI timing. Converts note velocities, supports sustain notes, and intelligently assigns must-hit sections.</p>
+            </div>
+
+            <div class="feature-card">
+                <div class="icon">🎯</div>
+                <h3>Fully Customizable</h3>
+                <p>Adjust BPM multipliers, note offsets, scroll speed, character names, and more. Fine-tune your chart with precision controls and export exactly what you need.</p>
+            </div>
+
+            <div class="feature-card">
+                <div class="icon">🚀</div>
+                <h3>Fast Processing</h3>
+                <p>Multi-threaded parsing engine processes even large MIDI files quickly. Real-time progress tracking keeps you informed during conversion.</p>
+            </div>
+        </div>
+
+        <div class="specs">
+            <h2>Technical Details</h2>
+            <div class="specs-grid">
+                <div class="spec-item">
+                    <h4>Input Support</h4>
+                    <p>Standard MIDI files (.mid), any PPQ resolution, multiple tempo changes, velocity filtering, separate files for each player</p>
+                </div>
+
+                <div class="spec-item">
+                    <h4>Output Format</h4>
+                    <p>Psych Engine JSON format, configurable decimal precision, automatic section detection, optional sustain notes, customizable metadata</p>
+                </div>
+
+                <div class="spec-item">
+                    <h4>System Requirements</h4>
+                    <p>Windows 7 SP1 or later (64-bit), 10 MB disk space, Visual C++ Redistributable (usually pre-installed)</p>
+                </div>
+
+                <div class="spec-item">
+                    <h4>Features</h4>
+                    <p>GUI and CLI modes, tempo map support, BPM multiplier, note offset adjustment, velocity threshold, real-time progress bars</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="code-example">
+<span class="comment"># Command-line usage example</span>
+midi2psych.exe <span class="command">player1.mid</span> <span class="command">player2.mid</span> <span class="command">output.json</span>
+
+<span class="comment"># With custom settings</span>
+midi2psych.exe vocals.mid inst.mid chart.json <span class="flag">--song</span> "My Song" <span class="flag">--bpm</span> 1.5 <span class="flag">--sustain</span>
+
+<span class="comment"># Full customization</span>
+midi2psych.exe p1.mid p2.mid out.json \
+  <span class="flag">--song</span> "Epic Chart" \
+  <span class="flag">--bpm</span> 1.2 \
+  <span class="flag">--offset</span> -30 \
+  <span class="flag">--speed</span> 3.0 \
+  <span class="flag">--p1</span> bf <span class="flag">--p2</span> dad \
+  <span class="flag">--sustain</span>
+        </div>
+
+        <footer>
+            <p>Midi2Psych v2.1 • Made for the FNF community • MIT License • 2026</p>
+        </footer>
+    </div>
+</body>
+</html>
