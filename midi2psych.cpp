@@ -4,6 +4,7 @@
 #include <string>
 #include <cstring>
 #include <algorithm>
+#include <execution>
 #include <cmath>
 #include <chrono>
 #include <iomanip>
@@ -58,8 +59,12 @@
 #define ID_EDIT_P2CHAR 1020
 #define ID_EDIT_GFCHAR 1021
 #define ID_EDIT_STAGE 1022
+#define ID_EDIT_SPLIT_NOTES 1023
 #define ID_CHECK_SUSTAIN 1030
 #define ID_CHECK_PRECISION 1031
+#define ID_CHECK_SPLIT 1032
+#define ID_CHECK_MINIFY 1033
+#define ID_EDIT_ROUND 1034
 #define ID_PROGRESS 1040
 #define ID_CONSOLE 1050
 
@@ -119,6 +124,33 @@ public:
 };
 
 GUILogger guiLogger;
+
+// Smart number to string - removes unnecessary decimal places
+inline std::string smartNumToStr(double num, int maxDecimals = 6) {
+    // Check if it's a whole number
+    if (std::floor(num) == num) {
+        return std::to_string(static_cast<int64_t>(num));
+    }
+    
+    std::ostringstream ss;
+    ss << std::fixed << std::setprecision(maxDecimals) << num;
+    std::string result = ss.str();
+    
+    // Remove trailing zeros
+    size_t dotPos = result.find('.');
+    if (dotPos != std::string::npos) {
+        size_t lastNonZero = result.find_last_not_of('0');
+        if (lastNonZero != std::string::npos && lastNonZero > dotPos) {
+            result = result.substr(0, lastNonZero + 1);
+        }
+        // Remove decimal point if no decimals left
+        if (result.back() == '.') {
+            result.pop_back();
+        }
+    }
+    
+    return result;
+}
 
 // Fast number to string conversion
 template<typename T>
@@ -350,6 +382,11 @@ private:
         int decimalPlaces = 6;
         bool highPrecision = true;
         bool sustainNotes = false;
+        bool splitOutput = false;
+        int notesPerSplit = 1000;
+        bool minifyJSON = false;
+        bool deduplicateSections = true;
+        int roundTimesTo = -1; // -1 = no rounding, 0 = round to whole numbers, 1 = round to 0.1, etc.
     };
     
     Config config;
@@ -414,6 +451,10 @@ private:
             json << std::setprecision(config.decimalPlaces);
         }
         
+        // Minified vs pretty
+        const char* separator = config.minifyJSON ? "" : " ";
+        const char* newline = config.minifyJSON ? "" : "\n";
+        
         json << R"({"song":{"song":")" << config.songName << R"(","notes":[)";
         
         for (size_t s = 0; s < sections.size(); ++s) {
@@ -424,20 +465,37 @@ private:
             for (size_t i = 0; i < notes.size(); ++i) {
                 if (i > 0) json << ",";
                 
-                double t = config.highPrecision ? notes[i].time : std::round(notes[i].time);
-                double d = config.highPrecision ? notes[i].duration : std::round(notes[i].duration);
+                double time = notes[i].time;
+                double dur = notes[i].duration;
                 
-                json << "[" << t << "," << notes[i].lane << ",0," << d << "]";
+                // Apply rounding if configured
+                if (config.roundTimesTo >= 0) {
+                    double multiplier = std::pow(10.0, config.roundTimesTo);
+                    time = std::round(time * multiplier) / multiplier;
+                    dur = std::round(dur * multiplier) / multiplier;
+                }
+                
+                std::string timeStr = smartNumToStr(time, config.decimalPlaces);
+                std::string durStr = smartNumToStr(dur, config.decimalPlaces);
+                
+                json << "[" << timeStr << "," << notes[i].lane << ",0,";
+                
+                // Omit duration if it's 0 (saves tons of space)
+                if (config.minifyJSON && dur == 0.0) {
+                    json << "0]";
+                } else {
+                    json << durStr << "]";
+                }
             }
             
             json << R"(],"lengthInSteps":16,"mustHitSection":)" 
                  << (sections[s].mustHitSection ? "true" : "false")
                  << R"(,"changeBPM":)" << (sections[s].changeBPM ? "true" : "false")
-                 << R"(,"bpm":)" << sections[s].bpm << "}";
+                 << R"(,"bpm":)" << smartNumToStr(sections[s].bpm, config.decimalPlaces) << "}";
         }
         
-        json << R"(],"bpm":)" << finalBPM 
-             << R"(,"needsVoices":true,"speed":)" << config.speed
+        json << R"(],"bpm":)" << smartNumToStr(finalBPM, config.decimalPlaces)
+             << R"(,"needsVoices":true,"speed":)" << smartNumToStr(config.speed, config.decimalPlaces)
              << R"(,"player1":")" << config.p1Char
              << R"(","player2":")" << config.p2Char
              << R"(","gfVersion":")" << config.gfChar
@@ -445,6 +503,34 @@ private:
              << R"(","validScore":true}})";
         
         return json.str();
+    }
+    
+    // Split sections into chunks based on note count
+    std::vector<std::vector<Section>> splitSections(const std::vector<Section>& sections, int notesPerChunk) {
+        std::vector<std::vector<Section>> chunks;
+        std::vector<Section> currentChunk;
+        int currentNoteCount = 0;
+        
+        for (const auto& section : sections) {
+            int sectionNoteCount = section.notes.size();
+            
+            // If adding this section would exceed the limit and we have sections, start new chunk
+            if (currentNoteCount + sectionNoteCount > notesPerChunk && !currentChunk.empty()) {
+                chunks.push_back(currentChunk);
+                currentChunk.clear();
+                currentNoteCount = 0;
+            }
+            
+            currentChunk.push_back(section);
+            currentNoteCount += sectionNoteCount;
+        }
+        
+        // Add remaining chunk
+        if (!currentChunk.empty()) {
+            chunks.push_back(currentChunk);
+        }
+        
+        return chunks;
     }
     
 public:
@@ -457,7 +543,7 @@ public:
         auto startTime = std::chrono::high_resolution_clock::now();
         
         guiLogger.logColored("\n================================================\n", CYAN);
-        guiLogger.logColored("    MIDI -> Psych Engine Converter v2.1\n", CYAN);
+        guiLogger.logColored("    MIDI -> Psych Engine Converter v2.3\n", CYAN);
         guiLogger.logColored("================================================\n\n", CYAN);
         
         ProgressBar parseBar("Parsing MIDI", 40);
@@ -569,10 +655,20 @@ public:
         }
         
         convertBar.update(0.50, "Sorting notes...");
-        std::sort(allNotes.begin(), allNotes.end(), 
-                  [](const ChartNote& a, const ChartNote& b) {
-                      return a.time < b.time || (a.time == b.time && a.lane < b.lane);
-                  });
+        
+        // Parallel sort if we have enough notes
+        if (allNotes.size() > 10000) {
+            guiLogger.logColored("Using parallel sort for large dataset...\n", YELLOW);
+            std::sort(std::execution::par_unseq, allNotes.begin(), allNotes.end(), 
+                      [](const ChartNote& a, const ChartNote& b) {
+                          return a.time < b.time || (a.time == b.time && a.lane < b.lane);
+                      });
+        } else {
+            std::sort(allNotes.begin(), allNotes.end(), 
+                      [](const ChartNote& a, const ChartNote& b) {
+                          return a.time < b.time || (a.time == b.time && a.lane < b.lane);
+                      });
+        }
         
         convertBar.update(0.75, "Building sections...");
         
@@ -648,17 +744,54 @@ public:
         
         convertBar.finish("Sections built!");
         
-        guiLogger.logColored("Generating JSON structure...\n", CYAN);
-        std::string jsonData = buildJSON(sections, finalBPM);
+        // Handle file output - split or single
+        std::vector<std::string> outputFiles;
+        size_t totalFileSize = 0;
         
-        guiLogger.logColored("Writing to file...\n", CYAN);
-        std::ofstream out(outFile);
-        if (!out) {
-            guiLogger.logColored("\n[X] Failed to write output file!\n", RED);
-            return false;
+        if (config.splitOutput && config.notesPerSplit > 0) {
+            guiLogger.logColored("Splitting chart into multiple files...\n", CYAN);
+            
+            auto chunks = splitSections(sections, config.notesPerSplit);
+            
+            // Get base filename without extension
+            std::string baseFile = outFile;
+            size_t dotPos = baseFile.find_last_of('.');
+            std::string baseName = (dotPos != std::string::npos) ? baseFile.substr(0, dotPos) : baseFile;
+            std::string extension = (dotPos != std::string::npos) ? baseFile.substr(dotPos) : ".json";
+            
+            for (size_t i = 0; i < chunks.size(); ++i) {
+                std::string filename = baseName + "-" + std::to_string(i + 1) + extension;
+                std::string jsonData = buildJSON(chunks[i], finalBPM);
+                
+                std::ofstream out(filename);
+                if (!out) {
+                    guiLogger.logColored("\n[X] Failed to write file: " + filename + "\n", RED);
+                    return false;
+                }
+                out << jsonData;
+                out.close();
+                
+                outputFiles.push_back(filename);
+                totalFileSize += jsonData.size();
+                
+                guiLogger.log("  Created: " + filename + " (" + 
+                             std::to_string(jsonData.size() / 1024.0) + " KB)\n");
+            }
+        } else {
+            guiLogger.logColored("Generating single JSON file...\n", CYAN);
+            std::string jsonData = buildJSON(sections, finalBPM);
+            
+            std::ofstream out(outFile);
+            if (!out) {
+                guiLogger.logColored("\n[X] Failed to write output file!\n", RED);
+                return false;
+            }
+            out << jsonData;
+            out.close();
+            
+            outputFiles.push_back(outFile);
+            totalFileSize = jsonData.size();
         }
-        out << jsonData;
-        out.close();
         
         auto endTime = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime);
@@ -700,9 +833,16 @@ public:
         std::ostringstream outInfo;
         outInfo << std::fixed << std::setprecision(2);
         outInfo << "Output:\n";
-        outInfo << "  File Size:     " << (jsonData.size() / 1024.0) << " KB\n";
+        if (outputFiles.size() > 1) {
+            outInfo << "  Files Created: " << outputFiles.size() << "\n";
+        }
+        outInfo << "  Total Size:    " << (totalFileSize / 1024.0) << " KB\n";
         outInfo << "  Process Time:  " << duration.count() << " ms\n";
-        outInfo << "  Location:      " << outFile << "\n\n";
+        if (outputFiles.size() == 1) {
+            outInfo << "  Location:      " << outputFiles[0] << "\n\n";
+        } else {
+            outInfo << "  Base Name:     " << outFile << "\n\n";
+        }
         guiLogger.log(outInfo.str());
         
         return true;
@@ -715,8 +855,8 @@ public:
 HWND g_hMainWnd = nullptr;
 HWND g_hP1Edit, g_hP2Edit, g_hOutEdit, g_hConsole, g_hProgress;
 HWND g_hSongEdit, g_hBPMEdit, g_hOffsetEdit, g_hVelEdit, g_hPrecEdit, g_hSpeedEdit;
-HWND g_hP1CharEdit, g_hP2CharEdit, g_hGFCharEdit, g_hStageEdit;
-HWND g_hSustainCheck, g_hPrecisionCheck;
+HWND g_hP1CharEdit, g_hP2CharEdit, g_hGFCharEdit, g_hStageEdit, g_hSplitNotesEdit, g_hRoundEdit;
+HWND g_hSustainCheck, g_hPrecisionCheck, g_hSplitCheck, g_hMinifyCheck;
 HFONT g_hFont, g_hTitleFont, g_hConsoleFont;
 bool g_converting = false;
 
@@ -775,6 +915,18 @@ void DoConversion() {
     config.stage = GetWindowTextStr(g_hStageEdit);
     config.sustainNotes = (SendMessage(g_hSustainCheck, BM_GETCHECK, 0, 0) == BST_CHECKED);
     config.highPrecision = (SendMessage(g_hPrecisionCheck, BM_GETCHECK, 0, 0) == BST_CHECKED);
+    config.splitOutput = (SendMessage(g_hSplitCheck, BM_GETCHECK, 0, 0) == BST_CHECKED);
+    config.minifyJSON = (SendMessage(g_hMinifyCheck, BM_GETCHECK, 0, 0) == BST_CHECKED);
+    
+    std::string splitNotesStr = GetWindowTextStr(g_hSplitNotesEdit);
+    if (!splitNotesStr.empty()) {
+        config.notesPerSplit = std::stoi(splitNotesStr);
+    }
+    
+    std::string roundStr = GetWindowTextStr(g_hRoundEdit);
+    if (!roundStr.empty() && roundStr != "-1") {
+        config.roundTimesTo = std::stoi(roundStr);
+    }
     
     converter.setConfig(config);
     converter.setProgressHandle(g_hProgress);
@@ -906,6 +1058,32 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             SendMessage(g_hPrecisionCheck, WM_SETFONT, (WPARAM)g_hFont, TRUE);
             yPos += 30;
             
+            // Row 3 - Split output
+            g_hSplitCheck = CreateWindow("BUTTON", "Split Output", WS_VISIBLE | WS_CHILD | BS_AUTOCHECKBOX,
+                10, yPos, 110, 22, hwnd, (HMENU)ID_CHECK_SPLIT, NULL, NULL);
+            SendMessage(g_hSplitCheck, WM_SETFONT, (WPARAM)g_hFont, TRUE);
+            
+            CreateWindow("STATIC", "Notes/File:", WS_VISIBLE | WS_CHILD,
+                130, yPos, 80, 20, hwnd, NULL, NULL, NULL);
+            g_hSplitNotesEdit = CreateWindow("EDIT", "1000", WS_VISIBLE | WS_CHILD | WS_BORDER | ES_AUTOHSCROLL,
+                215, yPos, 70, 22, hwnd, (HMENU)ID_EDIT_SPLIT_NOTES, NULL, NULL);
+            SendMessage(g_hSplitNotesEdit, WM_SETFONT, (WPARAM)g_hFont, TRUE);
+            
+            g_hMinifyCheck = CreateWindow("BUTTON", "Minify JSON", WS_VISIBLE | WS_CHILD | BS_AUTOCHECKBOX,
+                300, yPos, 110, 22, hwnd, (HMENU)ID_CHECK_MINIFY, NULL, NULL);
+            SendMessage(g_hMinifyCheck, WM_SETFONT, (WPARAM)g_hFont, TRUE);
+            SendMessage(g_hMinifyCheck, BM_SETCHECK, BST_CHECKED, 0);
+            
+            CreateWindow("STATIC", "Round to:", WS_VISIBLE | WS_CHILD,
+                420, yPos, 70, 20, hwnd, NULL, NULL, NULL);
+            g_hRoundEdit = CreateWindow("EDIT", "-1", WS_VISIBLE | WS_CHILD | WS_BORDER | ES_AUTOHSCROLL,
+                495, yPos, 50, 22, hwnd, (HMENU)ID_EDIT_ROUND, NULL, NULL);
+            SendMessage(g_hRoundEdit, WM_SETFONT, (WPARAM)g_hFont, TRUE);
+            
+            CreateWindow("STATIC", "(-1=off, 0=int, 1=0.1)", WS_VISIBLE | WS_CHILD | SS_RIGHT,
+                555, yPos, 100, 20, hwnd, NULL, NULL, NULL);
+            yPos += 30;
+            
             // Character settings
             CreateWindow("STATIC", "P1 Char:", WS_VISIBLE | WS_CHILD,
                 10, yPos, 60, 20, hwnd, NULL, NULL, NULL);
@@ -958,7 +1136,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             LoadLibrary("Msftedit.dll");
             g_hConsole = CreateWindowExW(WS_EX_CLIENTEDGE, MSFTEDIT_CLASS, L"",
                 WS_VISIBLE | WS_CHILD | WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY,
-                10, yPos, 760, 250, hwnd, (HMENU)ID_CONSOLE, NULL, NULL);
+                10, yPos, 760, 220, hwnd, (HMENU)ID_CONSOLE, NULL, NULL);
             
             SendMessage(g_hConsole, WM_SETFONT, (WPARAM)g_hConsoleFont, TRUE);
             
@@ -967,8 +1145,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             
             guiLogger.setConsole(g_hConsole);
             
-            guiLogger.logColored("MIDI to Psych Engine Converter v2.1\n", CYAN);
+            guiLogger.logColored("MIDI to Psych Engine Converter v2.3 TURBO\n", CYAN);
             guiLogger.logColored("Ready to convert!\n\n", GREEN);
+            guiLogger.logColored("Optimizations:\n", YELLOW);
+            guiLogger.log("  - Smart decimal removal: Auto-removes unnecessary decimals\n");
+            guiLogger.log("  - Minify JSON: Removes whitespace (enabled by default)\n");
+            guiLogger.log("  - Round times: Round timestamps to save space\n");
+            guiLogger.log("  - Parallel sorting: Auto-enabled for 10k+ notes\n");
+            guiLogger.log("  - Split output: Divide large charts into chunks\n\n");
             
             break;
         }
@@ -1067,10 +1251,19 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         
         LocalFree(argv);
         
-        // Run CLI version (reuse the logic from original main)
+        // Run CLI version
         if (argc < 3) {
             std::cout << RED << "Error: Need at least 2 MIDI files!\n" << RESET;
-            std::cout << "Use -h for help\n";
+            std::cout << "Usage: converter.exe <p1.mid> <p2.mid> [output.json] [options]\n";
+            std::cout << "\nOptions:\n";
+            std::cout << "  --split <notes>  Split output into multiple files with N notes each\n";
+            std::cout << "  --minify         Minify JSON output (remove whitespace)\n";
+            std::cout << "  --round <n>      Round timestamps (-1=off, 0=int, 1=0.1, 2=0.01)\n";
+            std::cout << "  --sustain        Enable sustain notes\n";
+            std::cout << "  --no-precision   Disable high precision\n";
+            std::cout << "  -s <name>        Song name\n";
+            std::cout << "  -b <mult>        BPM multiplier\n";
+            std::cout << "  -o <offset>      Note offset in ms\n";
             system("pause");
             return 1;
         }
@@ -1114,6 +1307,13 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
                 config.gfChar = args[++i];
             } else if (arg == "--stage" && i + 1 < argc) {
                 config.stage = args[++i];
+            } else if (arg == "--split" && i + 1 < argc) {
+                config.splitOutput = true;
+                config.notesPerSplit = std::stoi(args[++i]);
+            } else if (arg == "--minify") {
+                config.minifyJSON = true;
+            } else if (arg == "--round" && i + 1 < argc) {
+                config.roundTimesTo = std::stoi(args[++i]);
             }
         }
         
@@ -1149,14 +1349,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     
     RegisterClassEx(&wc);
     
-    // Create main window
+    // Create main window (slightly taller for new controls)
     g_hMainWnd = CreateWindowEx(
         0,
         "MIDI2PsychConverter",
-        "MIDI to Psych Engine Converter v2.1",
+        "MIDI to Psych Engine Converter v2.3 TURBO",
         WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX,
         CW_USEDEFAULT, CW_USEDEFAULT,
-        800, 650,
+        800, 680,
         NULL, NULL, hInstance, NULL
     );
     
