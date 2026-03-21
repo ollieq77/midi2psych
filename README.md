@@ -88,6 +88,15 @@ converter.exe song_p1.mid song_p2.mid chart.json --song "My Song" --bpm 1.2 --of
 | `--minify` | | Minify JSON output | Disabled |
 | `--round <n>` | | Round timestamps (-1=off, 0=int, 1=0.1, etc.) | -1 |
 
+## Example Video
+
+Generated using this tool, with the GUI interface:
+
+
+https://github.com/user-attachments/assets/b6fae129-6df6-411e-afa2-e629a10e28ad
+
+
+
 ### Graphical User Interface
 
 Simply run the executable without arguments to launch the GUI:
