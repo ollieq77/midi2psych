@@ -107,16 +107,19 @@ std::string PsychConverter::buildJSON(const std::vector<Section>& sections,
     }
 
     json << R"(],"bpm":)"      << smartNumToStr(finalBPM,           m_config.decimalPlaces)
-         << R"(,"needsVoices":true,"speed":)" << smartNumToStr(m_config.speed, m_config.decimalPlaces)
-         << R"(,"player1":")"  << m_config.p1Char
+         << R"(,"needsVoices":true,"speed":)" << smartNumToStr(m_config.speed, m_config.decimalPlaces);
+
+    json << R"(,"player1":")"  << m_config.p1Char
          << R"(","player2":")" << m_config.p2Char
          << R"(","gfVersion":")" << m_config.gfChar
-         << R"(","stage":")"   << m_config.stage;
+         << R"(","stage":")"   << m_config.stage << '"';  // Close the stage string properly
+
+    // Include mania field only if not default (mania=3)
+    if (m_config.mania != 3)
+        json << R"(,"mania":)" << m_config.mania;
     
-    if (m_config.mania > 0 && m_config.mania != 3)
-        json << R"(","mania":)" << m_config.mania;
-    
-    json << R"(","validScore":true}})";
+    // Always include validScore
+    json << R"(,"validScore":true}})";
 
     return json.str();
 }
@@ -211,8 +214,8 @@ bool PsychConverter::convert(const std::string& p1File,
     allNotes.reserve(50000);
     uint32_t maxTick = 0;
 
-    // Determine key count (mania=0 means default 4)
-    int keyCount = (m_config.mania > 0) ? m_config.mania : 4;
+    // Determine key count: keyCount = mania + 1 (mania=3 is default 4-key)
+    int keyCount = m_config.mania + 1;
 
     // P1 tracks → lanes 0 to (keyCount-1)
     size_t totalP1 = p1Parser.tracks.size(), doneP1 = 0;

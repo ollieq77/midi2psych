@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -42,7 +43,7 @@ public:
         double  noteOffset    = 0.0;
         int     minVelocity   = 0;
         int     decimalPlaces = 6;
-        int     mania         = 0;      // 0 = default(4-key), or 3,4,5,6,7,etc.
+        int     mania         = 3;      // 0=1-key, 2=3-key, 3=4-key(default), 4=5-key, etc.
         bool    highPrecision = true;
         bool    sustainNotes  = false;
         bool    splitOutput   = false;
@@ -52,7 +53,7 @@ public:
         int     roundTimesTo  = -1;
     };
 
-    void   setConfig(const Config& cfg)  { m_config = cfg; }
+    void   setConfig(const Config& cfg)  { m_config = cfg; clampConfig(); }
     Config& getConfig()                  { return m_config; }
     void   setProgressHandle(HWND hwnd)  { m_progressHandle = hwnd; }
 
@@ -64,6 +65,11 @@ public:
 private:
     Config m_config;
     HWND   m_progressHandle = nullptr;
+
+    // Clamp config values to safe ranges
+    void clampConfig() {
+        m_config.mania = std::max(0, std::min(m_config.mania, 20));
+    }
 
     // Tick → milliseconds, accounting for all tempo changes.
     double ticksToMs(uint32_t ticks, double finalBPM, uint16_t ppq,

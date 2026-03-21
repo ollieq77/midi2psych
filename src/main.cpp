@@ -46,7 +46,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/,
                       << "  -v / --velocity <n>     Min MIDI velocity\n"
                       << "  -p / --precision <n>    Decimal places\n"
                       << "  --speed        <n>      Chart scroll speed\n"
-                      << "  --mania        <n>      Key count (0=default/4key, or 3,4,5,6,7...)\n"
+                      << "  --mania        <n>      Key count (0=1-key, 2=3-key, 3=4-key(default), 4=5-key...)\n"
                       << "  --p1 / --p2 / --gf / --stage  <name>\n"
                       << "  --sustain               Enable sustain notes\n"
                       << "  --no-precision          Disable high precision\n"

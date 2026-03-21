@@ -1,0 +1,11 @@
+        : release | std=c++17 | warnings=normal
+        : release | std=c++17 | warnings=normal
+        : release | std=c++17 | warnings=normal
+        : debug | std=c++17 | warnings=normal
+        : debug | std=c++17 | warnings=normal
+        : debug | std=c++17 | warnings=normal
+        : debug | std=c++17 | warnings=normal
+        : debug | std=c++17 | warnings=normal
+        : debug | std=c++17 | warnings=normal
+        : debug | std=c++17 | warnings=normal
+        : debug | std=c++17 | warnings=normal

@@ -24,6 +24,7 @@
 #define ID_EDIT_P2CHAR    1020
 #define ID_EDIT_GFCHAR    1021
 #define ID_EDIT_STAGE     1022
+#define ID_EDIT_MANIA     1024  // 0=1-key, 2=3-key, 3=4-key(default), 4=5-key...
 #define ID_EDIT_SPLIT_NOTES 1023
 #define ID_CHECK_SUSTAIN  1030
 #define ID_CHECK_PRECISION 1031
@@ -38,7 +39,7 @@ extern HWND g_hMainWnd;
 extern HWND g_hP1Edit, g_hP2Edit, g_hOutEdit, g_hConsole, g_hProgress;
 extern HWND g_hSongEdit, g_hBPMEdit, g_hOffsetEdit, g_hVelEdit, g_hPrecEdit, g_hSpeedEdit;
 extern HWND g_hP1CharEdit, g_hP2CharEdit, g_hGFCharEdit, g_hStageEdit;
-extern HWND g_hSplitNotesEdit, g_hRoundEdit;
+extern HWND g_hSplitNotesEdit, g_hRoundEdit, g_hManiaEdit;
 extern HWND g_hSustainCheck, g_hPrecisionCheck, g_hSplitCheck, g_hMinifyCheck;
 extern HFONT g_hFont, g_hTitleFont, g_hConsoleFont;
 extern bool  g_converting;

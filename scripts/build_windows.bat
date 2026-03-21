@@ -8,7 +8,7 @@ title MIDI2Psych Builder
 :: ============================================================
 
 :: -- CONFIG --------------------------------------------------
-set BUILD_TYPE=release
+set BUILD_TYPE=debug
 :: Options: release | debug | asan
 ::   release  -> -O3, -march=native, -flto, stripped binary
 ::   debug    -> -O0, -g, full symbols, assertions on

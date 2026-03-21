@@ -22,7 +22,7 @@ HWND g_hConsole      = nullptr, g_hProgress  = nullptr;
 HWND g_hSongEdit     = nullptr, g_hBPMEdit   = nullptr, g_hOffsetEdit = nullptr;
 HWND g_hVelEdit      = nullptr, g_hPrecEdit  = nullptr, g_hSpeedEdit  = nullptr;
 HWND g_hP1CharEdit   = nullptr, g_hP2CharEdit = nullptr, g_hGFCharEdit = nullptr;
-HWND g_hStageEdit    = nullptr, g_hSplitNotesEdit = nullptr, g_hRoundEdit = nullptr;
+HWND g_hStageEdit    = nullptr, g_hSplitNotesEdit = nullptr, g_hRoundEdit = nullptr, g_hManiaEdit = nullptr;
 HWND g_hSustainCheck = nullptr, g_hPrecisionCheck = nullptr;
 HWND g_hSplitCheck   = nullptr, g_hMinifyCheck    = nullptr;
 HFONT g_hFont        = nullptr, g_hTitleFont = nullptr, g_hConsoleFont = nullptr;
@@ -73,26 +73,51 @@ void DoConversion() {
     PsychConverter converter;
     auto& cfg = converter.getConfig();
 
-    cfg.songName      = GetWindowTextStr(g_hSongEdit);
-    cfg.bpmMultiplier = std::stod(GetWindowTextStr(g_hBPMEdit));
-    cfg.noteOffset    = std::stod(GetWindowTextStr(g_hOffsetEdit));
-    cfg.minVelocity   = std::stoi(GetWindowTextStr(g_hVelEdit));
-    cfg.decimalPlaces = std::stoi(GetWindowTextStr(g_hPrecEdit));
-    cfg.speed         = std::stod(GetWindowTextStr(g_hSpeedEdit));
-    cfg.p1Char        = GetWindowTextStr(g_hP1CharEdit);
-    cfg.p2Char        = GetWindowTextStr(g_hP2CharEdit);
-    cfg.gfChar        = GetWindowTextStr(g_hGFCharEdit);
-    cfg.stage         = GetWindowTextStr(g_hStageEdit);
+    try {
+        cfg.songName      = GetWindowTextStr(g_hSongEdit);
+        cfg.bpmMultiplier = std::stod(GetWindowTextStr(g_hBPMEdit));
+        cfg.noteOffset    = std::stod(GetWindowTextStr(g_hOffsetEdit));
+        cfg.minVelocity   = std::stoi(GetWindowTextStr(g_hVelEdit));
+        cfg.decimalPlaces = std::stoi(GetWindowTextStr(g_hPrecEdit));
+        cfg.speed         = std::stod(GetWindowTextStr(g_hSpeedEdit));
+        
+        std::string maniaStr = GetWindowTextStr(g_hManiaEdit);
+        if (!maniaStr.empty()) {
+            cfg.mania = std::stoi(maniaStr);
+        }
+        
+        cfg.p1Char        = GetWindowTextStr(g_hP1CharEdit);
+        cfg.p2Char        = GetWindowTextStr(g_hP2CharEdit);
+        cfg.gfChar        = GetWindowTextStr(g_hGFCharEdit);
+        cfg.stage         = GetWindowTextStr(g_hStageEdit);
+    } catch (const std::exception& e) {
+        MessageBox(g_hMainWnd, "Invalid input value! Check all numeric fields.", "Error",
+                   MB_OK | MB_ICONERROR);
+        g_converting = false;
+        return;
+    }
     cfg.sustainNotes  = (SendMessage(g_hSustainCheck,   BM_GETCHECK, 0, 0) == BST_CHECKED);
     cfg.highPrecision = (SendMessage(g_hPrecisionCheck, BM_GETCHECK, 0, 0) == BST_CHECKED);
     cfg.splitOutput   = (SendMessage(g_hSplitCheck,     BM_GETCHECK, 0, 0) == BST_CHECKED);
     cfg.minifyJSON    = (SendMessage(g_hMinifyCheck,    BM_GETCHECK, 0, 0) == BST_CHECKED);
 
     std::string splitStr = GetWindowTextStr(g_hSplitNotesEdit);
-    if (!splitStr.empty())           cfg.notesPerSplit = std::stoi(splitStr);
+    if (!splitStr.empty()) {
+        try {
+            cfg.notesPerSplit = std::stoi(splitStr);
+        } catch (...) {
+            cfg.notesPerSplit = 1000;  // Default if parse fails
+        }
+    }
 
     std::string roundStr = GetWindowTextStr(g_hRoundEdit);
-    if (!roundStr.empty() && roundStr != "-1") cfg.roundTimesTo = std::stoi(roundStr);
+    if (!roundStr.empty() && roundStr != "-1") {
+        try {
+            cfg.roundTimesTo = std::stoi(roundStr);
+        } catch (...) {
+            cfg.roundTimesTo = -1;  // Default if parse fails
+        }
+    }
 
     converter.setConfig(cfg);
     converter.setProgressHandle(g_hProgress);
@@ -176,12 +201,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         label("Song Name:", 10);   edit(g_hSongEdit,  ID_EDIT_SONG,   95,  120, "Converted");
         label("BPM Mult:",  230);  edit(g_hBPMEdit,   ID_EDIT_BPM,    305,  60, "1.0");
         label("Speed:",     380);  edit(g_hSpeedEdit, ID_EDIT_SPEED,  435,  60, "2.5");
-        label("Offset(ms):", 510); edit(g_hOffsetEdit, ID_EDIT_OFFSET, 595, 60, "0");
+        label("Mania:",     510);  edit(g_hManiaEdit, ID_EDIT_MANIA,  565,  40, "3");
         y += 30;
 
         // Row 2
         label("Min Vel:",  10);   edit(g_hVelEdit,  ID_EDIT_VELOCITY,  95, 60, "0");
         label("Precision:", 170); edit(g_hPrecEdit, ID_EDIT_PRECISION, 245, 40, "6");
+        label("Offset(ms):", 300); edit(g_hOffsetEdit, ID_EDIT_OFFSET, 385, 60, "0");
 
         g_hSustainCheck = CreateWindow("BUTTON", "Sustain Notes",
             WS_VISIBLE | WS_CHILD | BS_AUTOCHECKBOX, 300, y, 120, 22,

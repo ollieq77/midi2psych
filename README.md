@@ -70,9 +70,9 @@ converter.exe song_p1.mid song_p2.mid chart.json --song "My Song" --bpm 1.2 --of
 
 #### Multikey Example (5-key/5K mania)
 ```bash
-converter.exe song_p1.mid song_p2.mid chart.json --song "My Song" --mania 5
+converter.exe song_p1.mid song_p2.mid chart.json --song "My Song" --mania 4
 ```
-With `--mania 5`, Player 1 gets lanes 0-4, Player 2 gets lanes 5-9. The JSON will include `"mania":5`.
+With `--mania 4` (5-key), Player 1 gets lanes 0-4, Player 2 gets lanes 5-9. The JSON includes `"mania":4`.
 
 ### Options
 
@@ -84,7 +84,7 @@ With `--mania 5`, Player 1 gets lanes 0-4, Player 2 gets lanes 5-9. The JSON wil
 | `--velocity <n>` | `-v` | Minimum MIDI velocity threshold | 0 |
 | `--precision <n>` | `-p` | Decimal places for timestamps | 3 |
 | `--speed <n>` | | Chart scroll speed | 1.0 |
-| `--mania <n>` | | Key count (0=default/4-key, or 3,4,5,6,7...) | 0 |
+| `--mania <n>` | | Key count (0=1-key, 2=3-key, 3=4-key, 4=5-key...) | 3 |
 | `--p1 <name>` | | Player 1 character name | "bf" |
 | `--p2 <name>` | | Player 2 character name | "dad" |
 | `--gf <name>` | | Girlfriend character name | "gf" |
@@ -123,24 +123,28 @@ The GUI provides:
 
 The tool generates JSON files compatible with Psych Engine chart format, containing:
 - Song metadata (name, BPM, speed, characters, stage)
-- Mania field (only included if multikey is enabled and mania ≠ 3)
+- Mania field (only included if mania ≠ 3, the default 4-key)
 - Note data with timestamps, lanes, and durations
 - Tempo changes
 - Section markers
 
 ### Multikey (Mania) Support
 
-When using `--mania <n>`, the output includes a `"mania"` field in the JSON metadata (except when mania is 3, which is the default 4-key format omitted for compatibility).
+The mania field uses Psych Engine's 0-indexed format: `keyCount = mania + 1`
 
-**Lane Layout:**
-- **Player 1**: Lanes 0 to (mania-1)
-- **Player 2**: Lanes mania to (2*mania-1)
+When using `--mania <n>`, the output includes a `"mania"` field in the JSON metadata (except when mania is 3, which is the default 4-key format).
+
+**Lane Layout (mania = key count - 1):**
+- **Player 1**: Lanes 0 to mania
+- **Player 2**: Lanes (mania+1) to (2*mania+1)
 
 **Examples:**
-- `--mania 4` → 5-key (P1: 0-3, P2: 4-7) with `"mania":4`
-- `--mania 5` → 6-key (P1: 0-4, P2: 5-9) with `"mania":5`
-- `--mania 3` → 4-key (default, no mania field in JSON)
-- No mania arg → 4-key default (no mania field)
+- `--mania 0` → 1-key (P1: lane 0, P2: lane 1) with `"mania":0`
+- `--mania 2` → 3-key (P1: 0-2, P2: 3-5) with `"mania":2`
+- `--mania 3` → 4-key (P1: 0-3, P2: 4-7) with NO mania field (default)
+- `--mania 4` → 5-key (P1: 0-4, P2: 5-9) with `"mania":4`
+- `--mania 5` → 6-key (P1: 0-5, P2: 6-11) with `"mania":5`
+- No mania arg → 4-key default (mania=3, no field in JSON)
 
 ## Troubleshooting
 
