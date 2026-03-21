@@ -102,6 +102,8 @@ Generated using this tool, with the GUI interface:
 
 https://github.com/user-attachments/assets/b6fae129-6df6-411e-afa2-e629a10e28ad
 
+
+
 ### Graphical User Interface
 
 Simply run the executable without arguments to launch the GUI:
