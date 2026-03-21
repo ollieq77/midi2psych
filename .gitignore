@@ -1,8 +1,12 @@
 # Build and packaging
 /build_cmake/
+/build/
 /dist/
 /temp_test/
 /cleanup_quarantine/
+/bin/
+/obj/
+/out/
 
 # Compiled object files and libraries
 *.o
@@ -10,43 +14,96 @@
 *.lo
 *.a
 *.lib
+*.so.*
+*.dylib
+*.dll
 
 # Executables and dynamic libraries
 *.exe
 *.dll
 *.so
 *.dylib
+*.app
+
+# MinGW/GCC specific
+*.d
+*.gcno
+*.gcda
+*.gcov
 
 # CMake files
 CMakeFiles/
 CMakeCache.txt
 cmake_install.cmake
 Makefile
+cmake-build-*/
+CTestTestfile.cmake
+_deps/
 
 # Visual Studio / IDE
 *.sln
 *.vcxproj*
 *.user
 *.vcxproj.filters
+*.suo
+*.sdf
 .vs/
-.vscode/
+.vscode/settings.json
+.vscode/launch.json
+.idea/
+*.swp
+*.swo
+*~
 
 # OS generated files
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
 
 # Logs and temporary files
 *.log
 *.tmp
-*.swp
-*~
+*.temp
+*.cache
+*.bak
+*.backup
+*.orig
+*.rej
+*.patch
 
-# Archives
+# Archives and compressed files
 *.zip
 *.tar.gz
+*.tar.bz2
+*.rar
+*.7z
+*.gz
+*.bz2
 
-# Node
+# Package managers
 node_modules/
+.vcpkg/
+conan/
+
+# Testing and coverage
+*.gcov
+coverage/
+*.profraw
+*.profdata
+
+# Miscellaneous
+*.stackdump
+*.core
+*.crash
+*.pid
+*.seed
+*.pid.lock
 
 # Python
 __pycache__/
