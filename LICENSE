@@ -1,0 +1,104 @@
+MIDI2Psych Non-Commercial Open Source License
+Copyleft (c) 2026 ollieq1977
+
+==============================================================================
+WHAT IS THIS?
+==============================================================================
+
+This license governs how other people can use, modify, and share this
+software. Read it before using MIDI2Psych in your own projects.
+
+Some terms used below explained in plain English:
+
+  Personal use
+      You're using it for yourself -- hobby projects, research, learning,
+      tinkering. No money changes hands and it's not part of a business.
+
+  Commercial use
+      Anything where money is involved or the software contributes to a
+      product or service that generates revenue. This includes using it
+      internally at a company, bundling it in a paid product, offering it
+      as part of a service, or saving your business time/money with it.
+      If in doubt, it counts as commercial.
+
+  Modify
+      Changing the source code -- fixing bugs, adding features, porting it
+      to another platform, or building something new on top of it.
+
+  Redistribute
+      Sharing the software with other people, whether that's uploading it
+      somewhere, including it in another project, or passing it along.
+
+  Open source / Closed source
+      Open source means the source code is publicly available. Closed source
+      (also called proprietary) means the source code is kept private. If
+      you modify this software and share it, you must keep it open source.
+
+  Fork
+      A copy of this project that you've taken and developed independently.
+      Forks must follow the same rules as the original.
+
+==============================================================================
+WHAT YOU CAN DO
+==============================================================================
+
+  [YES] Use it for personal, non-commercial purposes
+        You can use MIDI2Psych freely for hobby projects, personal research,
+        education, or anything else that isn't commercial.
+
+  [YES] Modify it
+        You can change the source code however you like for personal use.
+        Go wild.
+
+  [YES] Redistribute it
+        You can share this software or modified versions of it, as long as
+        you follow the conditions in the next section.
+
+==============================================================================
+WHAT YOU CANNOT DO
+==============================================================================
+
+  [NO]  Use it commercially
+        You may not use this software -- or any modified version of it --
+        in a commercial context. This includes but is not limited to:
+          - Products or services that generate revenue
+          - Internal business tooling at a company
+          - Freelance or contract work
+          - SaaS platforms, apps, or tools offered to paying customers
+        If you want a commercial license, get in touch.
+
+  [NO]  Distribute closed-source forks
+        If you modify this software and share it with anyone, the full
+        source code of your modified version must also be made publicly
+        available under this same license. You cannot keep your changes
+        private while distributing the compiled result.
+
+  [NO]  Use the author's name to promote your work
+        You may not use the name "Ollie Quayle" or "MIDI2Psych" to endorse,
+        advertise, or promote any software derived from this project without
+        explicit written permission.
+
+==============================================================================
+CONDITIONS FOR REDISTRIBUTION
+==============================================================================
+
+If you redistribute this software or a modified version of it, you must:
+
+  1. Include this license file in full with your distribution.
+
+  2. Credit the original author clearly:
+       Original work by ollieq1977 at [this repo](https://github.com/ollieq77/midi2psych)
+
+  3. Clearly state what changes you made, if any.
+
+  4. License your version under these same terms (same permissions,
+     same restrictions). You cannot grant others more rights than this
+     license gives you.
+
+==============================================================================
+NO WARRANTY
+==============================================================================
+
+This software is provided "as is", without warranty of any kind. The author
+is not responsible for anything that goes wrong as a result of using it.
+You use it at your own risk.
