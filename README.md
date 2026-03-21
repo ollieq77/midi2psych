@@ -68,6 +68,12 @@ converter.exe player1.mid player2.mid mychart.json
 converter.exe song_p1.mid song_p2.mid chart.json --song "My Song" --bpm 1.2 --offset 50 --velocity 60 --sustain
 ```
 
+#### Multikey Example (5-key/5K mania)
+```bash
+converter.exe song_p1.mid song_p2.mid chart.json --song "My Song" --mania 5
+```
+With `--mania 5`, Player 1 gets lanes 0-4, Player 2 gets lanes 5-9. The JSON will include `"mania":5`.
+
 ### Options
 
 | Option | Short | Description | Default |
@@ -78,6 +84,7 @@ converter.exe song_p1.mid song_p2.mid chart.json --song "My Song" --bpm 1.2 --of
 | `--velocity <n>` | `-v` | Minimum MIDI velocity threshold | 0 |
 | `--precision <n>` | `-p` | Decimal places for timestamps | 3 |
 | `--speed <n>` | | Chart scroll speed | 1.0 |
+| `--mania <n>` | | Key count (0=default/4-key, or 3,4,5,6,7...) | 0 |
 | `--p1 <name>` | | Player 1 character name | "bf" |
 | `--p2 <name>` | | Player 2 character name | "dad" |
 | `--gf <name>` | | Girlfriend character name | "gf" |
@@ -87,6 +94,13 @@ converter.exe song_p1.mid song_p2.mid chart.json --song "My Song" --bpm 1.2 --of
 | `--split <n>` | | Split output into files with N notes each | Disabled |
 | `--minify` | | Minify JSON output | Disabled |
 | `--round <n>` | | Round timestamps (-1=off, 0=int, 1=0.1, etc.) | -1 |
+
+## Example Video
+
+Generated using this tool, with the GUI interface:
+
+
+https://github.com/user-attachments/assets/b6fae129-6df6-411e-afa2-e629a10e28ad
 
 ### Graphical User Interface
 
@@ -107,9 +121,24 @@ The GUI provides:
 
 The tool generates JSON files compatible with Psych Engine chart format, containing:
 - Song metadata (name, BPM, speed, characters, stage)
+- Mania field (only included if multikey is enabled and mania ≠ 3)
 - Note data with timestamps, lanes, and durations
 - Tempo changes
 - Section markers
+
+### Multikey (Mania) Support
+
+When using `--mania <n>`, the output includes a `"mania"` field in the JSON metadata (except when mania is 3, which is the default 4-key format omitted for compatibility).
+
+**Lane Layout:**
+- **Player 1**: Lanes 0 to (mania-1)
+- **Player 2**: Lanes mania to (2*mania-1)
+
+**Examples:**
+- `--mania 4` → 5-key (P1: 0-3, P2: 4-7) with `"mania":4`
+- `--mania 5` → 6-key (P1: 0-4, P2: 5-9) with `"mania":5`
+- `--mania 3` → 4-key (default, no mania field in JSON)
+- No mania arg → 4-key default (no mania field)
 
 ## Troubleshooting
 

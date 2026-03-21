@@ -46,6 +46,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/,
                       << "  -v / --velocity <n>     Min MIDI velocity\n"
                       << "  -p / --precision <n>    Decimal places\n"
                       << "  --speed        <n>      Chart scroll speed\n"
+                      << "  --mania        <n>      Key count (0=default/4key, or 3,4,5,6,7...)\n"
                       << "  --p1 / --p2 / --gf / --stage  <name>\n"
                       << "  --sustain               Enable sustain notes\n"
                       << "  --no-precision          Disable high precision\n"
@@ -73,6 +74,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/,
             else if ((a == "-v"  || a == "--velocity")  && i+1 < argc) cfg.minVelocity   = std::stoi(next());
             else if ((a == "-p"  || a == "--precision") && i+1 < argc) cfg.decimalPlaces = std::stoi(next());
             else if ( a == "--speed"   && i+1 < argc)                  cfg.speed         = std::stod(next());
+            else if ( a == "--mania"   && i+1 < argc)                  cfg.mania         = std::stoi(next());
             else if ( a == "--p1"      && i+1 < argc)                  cfg.p1Char        = next();
             else if ( a == "--p2"      && i+1 < argc)                  cfg.p2Char        = next();
             else if ( a == "--gf"      && i+1 < argc)                  cfg.gfChar        = next();

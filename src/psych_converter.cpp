@@ -111,8 +111,12 @@ std::string PsychConverter::buildJSON(const std::vector<Section>& sections,
          << R"(,"player1":")"  << m_config.p1Char
          << R"(","player2":")" << m_config.p2Char
          << R"(","gfVersion":")" << m_config.gfChar
-         << R"(","stage":")"   << m_config.stage
-         << R"(","validScore":true}})";
+         << R"(","stage":")"   << m_config.stage;
+    
+    if (m_config.mania > 0 && m_config.mania != 3)
+        json << R"(","mania":)" << m_config.mania;
+    
+    json << R"(","validScore":true}})";
 
     return json.str();
 }
@@ -207,7 +211,10 @@ bool PsychConverter::convert(const std::string& p1File,
     allNotes.reserve(50000);
     uint32_t maxTick = 0;
 
-    // P1 tracks → lanes 0-3
+    // Determine key count (mania=0 means default 4)
+    int keyCount = (m_config.mania > 0) ? m_config.mania : 4;
+
+    // P1 tracks → lanes 0 to (keyCount-1)
     size_t totalP1 = p1Parser.tracks.size(), doneP1 = 0;
     for (const auto& track : p1Parser.tracks) {
         for (const auto& evt : track) {
@@ -219,7 +226,7 @@ bool PsychConverter::convert(const std::string& p1File,
                 double e = ticksToMs(evt.tick + evt.duration, finalBPM, ppq, tempoChanges, m_config.bpmMultiplier);
                 dur = e - s;
             }
-            allNotes.emplace_back(ms, evt.note % 4, dur);
+            allNotes.emplace_back(ms, evt.note % keyCount, dur);
             maxTick = std::max(maxTick, evt.tick);
         }
         ++doneP1;
@@ -231,7 +238,7 @@ bool PsychConverter::convert(const std::string& p1File,
     convertBar.update(0.25, "Processing P2...");
     size_t p1Count = allNotes.size();
 
-    // P2 tracks → lanes 10-13 (offset stripped later)
+    // P2 tracks → lanes (keyCount) to (2*keyCount-1), stored as +100 temporarily for differentiation
     size_t totalP2 = p2Parser.tracks.size(), doneP2 = 0;
     for (const auto& track : p2Parser.tracks) {
         for (const auto& evt : track) {
@@ -243,7 +250,7 @@ bool PsychConverter::convert(const std::string& p1File,
                 double e = ticksToMs(evt.tick + evt.duration, finalBPM, ppq, tempoChanges, m_config.bpmMultiplier);
                 dur = e - s;
             }
-            allNotes.emplace_back(ms, (evt.note % 4) + 10, dur);
+            allNotes.emplace_back(ms, (evt.note % keyCount) + 100, dur);
             maxTick = std::max(maxTick, evt.tick);
         }
         ++doneP2;
@@ -308,7 +315,7 @@ bool PsychConverter::convert(const std::string& p1File,
 
         int p1Count2 = 0, p2Count2 = 0;
         for (size_t i = sectionStart; i < sectionEnd2; ++i)
-            (allNotes[i].lane < 10 ? p1Count2 : p2Count2)++;
+            (allNotes[i].lane < 100 ? p1Count2 : p2Count2)++;
 
         if (p1Count2 == 0 && p2Count2 == 0)
             section.mustHitSection = lastMustHit;
@@ -318,11 +325,11 @@ bool PsychConverter::convert(const std::string& p1File,
 
         for (size_t i = sectionStart; i < sectionEnd2; ++i) {
             const auto& note  = allNotes[i];
-            bool isP1         = (note.lane < 10);
-            int  baseLane     = note.lane % 10;
+            bool isP1         = (note.lane < 100);
+            int  baseLane     = isP1 ? note.lane : (note.lane - 100);
             int  finalLane    = section.mustHitSection
-                                ? (isP1 ? baseLane : baseLane + 4)
-                                : (isP1 ? baseLane + 4 : baseLane);
+                                ? (isP1 ? baseLane : baseLane + keyCount)
+                                : (isP1 ? baseLane + keyCount : baseLane);
             section.notes.emplace_back(note.time, finalLane, note.duration);
         }
 

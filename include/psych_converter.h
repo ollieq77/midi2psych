@@ -42,6 +42,7 @@ public:
         double  noteOffset    = 0.0;
         int     minVelocity   = 0;
         int     decimalPlaces = 6;
+        int     mania         = 0;      // 0 = default(4-key), or 3,4,5,6,7,etc.
         bool    highPrecision = true;
         bool    sustainNotes  = false;
         bool    splitOutput   = false;
