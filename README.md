@@ -8,7 +8,7 @@ Available as a GUI application or a CLI tool — same binary, same options.
 
 ## Download
 
-Grab the latest release from the [Releases](../../releases) page. The zip contains the executable and any required runtime DLLs — no install needed, just run it.
+Grab the latest release from the [Releases](https://github.com/ollieq77/midi2psych/releases/latest) page. The zip contains the executable and any required runtime DLLs — no install needed, just run it.
 
 ---
 

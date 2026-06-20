@@ -25,7 +25,7 @@ set STD=c++17
 set EXTRA_FLAGS=
 set BUNDLE_DLLS=libwinpthread-1.dll
 set COPY_ASSETS=1
-set MAKE_ZIP=0
+set MAKE_ZIP=1
 
 :: ============================================================
 ::  Nothing below this line should need editing
