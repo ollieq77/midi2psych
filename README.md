@@ -68,6 +68,13 @@ midi2psych.exe p1.mid p2.mid chart.json -s "My Song" --sustain -b 1.5
 midi2psych.exe p1.mid p2.mid chart.json --mania 5 --minify --stage myStage
 ```
 
+# Example
+https://github.com/user-attachments/assets/007d624b-53a3-4ac5-b7de-9e9380150e94
+
+
+
+
+
 ---
 
 ## How it works
