@@ -33,6 +33,8 @@ public:
     std::vector<TempoChange>           tempoChanges;
     uint16_t ppq  = 480;
     double   bpm  = 120.0;
+    uint8_t  minPitch = 127;  // Lowest MIDI note found
+    uint8_t  maxPitch = 0;    // Highest MIDI note found
 
     // Optional: called with progress in [0,1] as tracks are processed.
     std::function<void(double)> progressCallback;

@@ -1,181 +1,125 @@
 # MIDI2Psych
 
-A powerful tool for converting MIDI files to Psych Engine chart format, designed for Friday Night Funkin' modding. This converter supports both command-line interface (CLI) and graphical user interface (GUI) modes, making it easy to create custom charts from MIDI compositions.
+A Windows tool for converting MIDI files into Psych Engine chart JSON. Takes two MIDI files (one per player) and outputs a chart ready to drop into a Psych Engine mod.
 
-## Features
+Available as a GUI application or a CLI tool — same binary, same options.
 
-- **Dual Interface**: Choose between CLI for automation or GUI for interactive use
-- **Two-Player Support**: Convert separate MIDI files for Player 1 and Player 2 charts
-- **Comprehensive Options**: Customize BPM, timing offset, velocity thresholds, and more
-- **Sustain Notes**: Enable/disable sustain note conversion
-- **Output Splitting**: Split large charts into multiple files
-- **JSON Minification**: Optimize output file size
-- **High Precision**: Configurable decimal precision for timestamps
-- **Progress Tracking**: Real-time progress bars and logging
+---
 
-## Requirements
+## Download
 
-- **Operating System**: Windows 10/11
-- **Compiler**: MinGW-w64 (GCC for Windows)
-- **C++ Standard**: C++17
+Grab the latest release from the [Releases](../../releases) page. The zip contains the executable and any required runtime DLLs — no install needed, just run it.
 
-### Installing MinGW-w64
-
-1. Download MinGW-w64 from [winlibs.com](https://winlibs.com/)
-2. Extract to `C:\mingw64`
-3. Add `C:\mingw64\bin` to your system PATH
-4. Restart your terminal
-
-Alternatively, install via winget:
-```bash
-winget install -e --id MSYS2.MSYS2
-```
-
-## Building
-
-1. Clone or download the repository
-2. Open Command Prompt in the project root
-3. Run the build script:
-   ```bash
-   scripts\build_windows.bat
-   ```
-4. The compiled executable will be in the `dist\` folder
-
-### Build Options
-
-The build script supports different configurations:
-- **Release** (default): Optimized build with `-O3` and LTO
-- **Debug**: Unoptimized build with debug symbols
-- **ASan**: Address Sanitizer enabled for debugging
-
-Edit `scripts\build_windows.bat` to change build settings.
+---
 
 ## Usage
 
-### Command Line Interface
+### GUI
 
-```bash
-converter.exe <p1.mid> <p2.mid> [output.json] [options]
+Double-click `midi2psych.exe`. The interface lets you select your P1 and P2 MIDI files, configure all options, and run the conversion with a live progress log.
+
+### CLI
+
+Run `midi2psych.exe` with arguments from a terminal and a console window will open automatically.
+
+```
+midi2psych.exe <p1.mid> <p2.mid> [output.json] [options]
 ```
 
-#### Basic Example
-```bash
-converter.exe player1.mid player2.mid mychart.json
+**Arguments**
+
+| Argument | Description |
+|---|---|
+| `p1.mid` | MIDI file for Player 1 (required) |
+| `p2.mid` | MIDI file for Player 2 (required) |
+| `output.json` | Output file path (default: `chart.json`) |
+
+**Options**
+
+| Flag | Description |
+|---|---|
+| `-s` / `--song <name>` | Song name written into the chart |
+| `-b` / `--bpm <mult>` | BPM multiplier applied to the whole chart (default: 1.0) |
+| `-o` / `--offset <ms>` | Shift all notes by N milliseconds |
+| `-v` / `--velocity <n>` | Ignore notes below this MIDI velocity (default: 0) |
+| `-p` / `--precision <n>` | Decimal places for timestamps |
+| `--speed <n>` | Chart scroll speed |
+| `--mania <n>` | Key count — 0=1-key, 1=2-key, 2=3-key, 3=4-key (default), 4=5-key, etc. |
+| `--p1 <name>` | Player 1 character name |
+| `--p2 <name>` | Player 2 character name |
+| `--gf <name>` | Girlfriend character name |
+| `--stage <name>` | Stage name |
+| `--sustain` | Enable hold notes (uses note-on/off duration) |
+| `--no-precision` | Disable high-precision timestamp output |
+| `--split <n>` | Split output into multiple files, N notes per file |
+| `--minify` | Strip unnecessary whitespace from the JSON |
+| `--round <n>` | Round timestamps — `-1` = off, `0` = integer, `n` = N decimal places |
+
+**Examples**
+
+```
+# Basic conversion
+midi2psych.exe song_p1.mid song_p2.mid chart.json -s "My Song"
+
+# 4-key chart with hold notes and a BPM bump
+midi2psych.exe p1.mid p2.mid chart.json -s "My Song" --sustain -b 1.5
+
+# 6-key chart, minified, with a specific stage
+midi2psych.exe p1.mid p2.mid chart.json --mania 5 --minify --stage myStage
 ```
 
-#### Advanced Example
-```bash
-converter.exe song_p1.mid song_p2.mid chart.json --song "My Song" --bpm 1.2 --offset 50 --velocity 60 --sustain
+---
+
+## How it works
+
+1. **Parsing** — Both MIDI files are parsed in parallel. Tempo map, PPQ, and all note events are extracted from every track. Running status and variable-length values are handled correctly.
+
+2. **Pitch-to-lane mapping** — By default, MIDI pitch values are distributed across lanes using a histogram-balancing algorithm: pitches are sorted by frequency and assigned greedily to the least-loaded lane, keeping the note spread as even as possible. You can switch to simple modulo mapping by disabling smart pitch mapping.
+
+3. **Timing** — Tick values are converted to milliseconds using the full tempo map, so BPM changes mid-song are handled accurately. The BPM multiplier scales everything uniformly.
+
+4. **Simultaneous note redistribution** — If multiple notes on the same lane land at exactly the same time, they are spread out evenly between that moment and the next note on that lane (within the same section), so the chart remains playable.
+
+5. **Section building** — Notes are grouped into 4-beat sections. Each section gets a `mustHitSection` flag based on whether P1 or P2 has more notes in it. BPM changes within a section are flagged with `changeBPM`.
+
+6. **Output** — A single JSON file is written in Psych Engine chart format. With `--split`, the chart is broken into multiple files at section boundaries.
+
+---
+
+## Building from source
+
+Requires MinGW-w64 with g++ on your PATH. No other dependencies.
+
+```
+scripts\build_windows.bat
 ```
 
-#### Multikey Example (5-key/5K mania)
-```bash
-converter.exe song_p1.mid song_p2.mid chart.json --song "My Song" --mania 4
+The built release lands in `dist\release\` with the executable and any bundled DLLs. Edit the config section at the top of the script to switch between `release`, `debug`, and `asan` builds or change compiler flags.
+
+---
+
+## Project structure
+
 ```
-With `--mania 4` (5-key), Player 1 gets lanes 0-4, Player 2 gets lanes 5-9. The JSON includes `"mania":4`.
-
-### Options
-
-| Option | Short | Description | Default |
-|--------|-------|-------------|---------|
-| `--song <name>` | `-s` | Song name for the chart | "Test Song" |
-| `--bpm <mult>` | `-b` | BPM multiplier | 1.0 |
-| `--offset <ms>` | `-o` | Note offset in milliseconds | 0.0 |
-| `--velocity <n>` | `-v` | Minimum MIDI velocity threshold | 0 |
-| `--precision <n>` | `-p` | Decimal places for timestamps | 3 |
-| `--speed <n>` | | Chart scroll speed | 1.0 |
-| `--mania <n>` | | Key count (0=1-key, 2=3-key, 3=4-key, 4=5-key...) | 3 |
-| `--p1 <name>` | | Player 1 character name | "bf" |
-| `--p2 <name>` | | Player 2 character name | "dad" |
-| `--gf <name>` | | Girlfriend character name | "gf" |
-| `--stage <name>` | | Stage name | "stage" |
-| `--sustain` | | Enable sustain notes | Disabled |
-| `--no-precision` | | Disable high precision mode | Enabled |
-| `--split <n>` | | Split output into files with N notes each | Disabled |
-| `--minify` | | Minify JSON output | Disabled |
-| `--round <n>` | | Round timestamps (-1=off, 0=int, 1=0.1, etc.) | -1 |
-
-## Example Video
-
-Generated using this tool, with the GUI interface:
-
-
-https://github.com/user-attachments/assets/b6fae129-6df6-411e-afa2-e629a10e28ad
-
-
-
-### Graphical User Interface
-
-Simply run the executable without arguments to launch the GUI:
-
-```bash
-converter.exe
+midi2psych/
+  src/                  Source files
+    main.cpp            Entry point — GUI/CLI dispatch
+    midi_parser.cpp     Binary MIDI parser
+    psych_converter.cpp Conversion logic and JSON output
+    gui.cpp             Win32 GUI
+    gui_logger.cpp      Thread-safe coloured log output
+    progress_bar.cpp    Progress reporting
+  include/              Header files
+  scripts/
+    build_windows.bat   Build script
+  dist/
+    build/              Compiler output
+    release/            Distributable folder (exe + DLLs)
+    zips/               Zipped releases (if MAKE_ZIP=1)
 ```
 
-The GUI provides:
-- File selection dialogs for MIDI inputs
-- Output file selection
-- Interactive option configuration
-- Real-time progress tracking
-- Log output window
-
-## Output Format
-
-The tool generates JSON files compatible with Psych Engine chart format, containing:
-- Song metadata (name, BPM, speed, characters, stage)
-- Mania field (only included if mania ≠ 3, the default 4-key)
-- Note data with timestamps, lanes, and durations
-- Tempo changes
-- Section markers
-
-### Multikey (Mania) Support
-
-The mania field uses Psych Engine's 0-indexed format: `keyCount = mania + 1`
-
-When using `--mania <n>`, the output includes a `"mania"` field in the JSON metadata (except when mania is 3, which is the default 4-key format).
-
-**Lane Layout (mania = key count - 1):**
-- **Player 1**: Lanes 0 to mania
-- **Player 2**: Lanes (mania+1) to (2*mania+1)
-
-**Examples:**
-- `--mania 0` → 1-key (P1: lane 0, P2: lane 1) with `"mania":0`
-- `--mania 2` → 3-key (P1: 0-2, P2: 3-5) with `"mania":2`
-- `--mania 3` → 4-key (P1: 0-3, P2: 4-7) with NO mania field (default)
-- `--mania 4` → 5-key (P1: 0-4, P2: 5-9) with `"mania":4`
-- `--mania 5` → 6-key (P1: 0-5, P2: 6-11) with `"mania":5`
-- No mania arg → 4-key default (mania=3, no field in JSON)
-
-## Troubleshooting
-
-### Build Issues
-- Ensure MinGW-w64 is properly installed and in PATH
-- Check that all source files exist in `src/` directory
-- Verify C++17 support in your GCC version
-
-### Conversion Issues
-- MIDI files should contain note data on appropriate channels
-- Check velocity values if notes aren't being converted
-- Use `--velocity` option to filter low-velocity notes
-- Enable logging output for detailed conversion information
-
-### GUI Issues
-- Ensure Windows Common Controls are available
-- Try running as administrator if file dialogs fail
-
-## Contributing
-
-Contributions are welcome! Please:
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
+---
 
 ## License
 
-This project is open source. Please check the license file for details.
-
-## Credits
-
-Built with C++17, Windows API, and standard MIDI parsing.
+See [LICENSE](LICENSE).

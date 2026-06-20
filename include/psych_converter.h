@@ -51,6 +51,7 @@ public:
         bool    minifyJSON    = false;
         // -1 = off, 0 = integer, 1 = 1 d.p., 2 = 2 d.p., …
         int     roundTimesTo  = -1;
+        bool    smartPitchMapping = true;  // Intelligent pitch-to-lane distribution
     };
 
     void   setConfig(const Config& cfg)  { m_config = cfg; clampConfig(); }
@@ -68,7 +69,7 @@ private:
 
     // Clamp config values to safe ranges
     void clampConfig() {
-        m_config.mania = std::max(0, std::min(m_config.mania, 20));
+        m_config.mania = std::max(0, std::min(m_config.mania, 69420));
     }
 
     // Tick → milliseconds, accounting for all tempo changes.
@@ -87,4 +88,11 @@ private:
     // Divide sections into chunks capped at notesPerChunk total notes.
     std::vector<std::vector<Section>> splitSections(const std::vector<Section>& sections,
                                                      int notesPerChunk) const;
+
+    // Redistribute simultaneous same-lane notes evenly across the gap until
+    // the next note with the same lane.
+    void redistributeSimultaneousNotes(std::vector<ChartNote>& notes, double sectionLengthMs) const;
+
+    // Intelligent pitch-to-lane mapping to avoid pitch collisions
+    int smartPitchToLane(uint8_t midiNote, int keyCount, uint8_t minPitch, uint8_t maxPitch) const;
 };

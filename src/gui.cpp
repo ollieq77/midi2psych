@@ -24,7 +24,7 @@ HWND g_hVelEdit      = nullptr, g_hPrecEdit  = nullptr, g_hSpeedEdit  = nullptr;
 HWND g_hP1CharEdit   = nullptr, g_hP2CharEdit = nullptr, g_hGFCharEdit = nullptr;
 HWND g_hStageEdit    = nullptr, g_hSplitNotesEdit = nullptr, g_hRoundEdit = nullptr, g_hManiaEdit = nullptr;
 HWND g_hSustainCheck = nullptr, g_hPrecisionCheck = nullptr;
-HWND g_hSplitCheck   = nullptr, g_hMinifyCheck    = nullptr;
+HWND g_hSplitCheck   = nullptr, g_hMinifyCheck    = nullptr, g_hSmartMapCheck = nullptr;
 HFONT g_hFont        = nullptr, g_hTitleFont = nullptr, g_hConsoleFont = nullptr;
 bool  g_converting   = false;
 
@@ -100,6 +100,7 @@ void DoConversion() {
     cfg.highPrecision = (SendMessage(g_hPrecisionCheck, BM_GETCHECK, 0, 0) == BST_CHECKED);
     cfg.splitOutput   = (SendMessage(g_hSplitCheck,     BM_GETCHECK, 0, 0) == BST_CHECKED);
     cfg.minifyJSON    = (SendMessage(g_hMinifyCheck,    BM_GETCHECK, 0, 0) == BST_CHECKED);
+    cfg.smartPitchMapping = (SendMessage(g_hSmartMapCheck, BM_GETCHECK, 0, 0) == BST_CHECKED);
 
     std::string splitStr = GetWindowTextStr(g_hSplitNotesEdit);
     if (!splitStr.empty()) {
@@ -141,159 +142,160 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
 
     case WM_CREATE: {
-        g_hFont = CreateFont(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        g_hFont = CreateFont(14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, "Segoe UI");
 
-        g_hTitleFont = CreateFont(20, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
+        g_hTitleFont = CreateFont(16, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, "Segoe UI");
 
-        g_hConsoleFont = CreateFont(14, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+        g_hConsoleFont = CreateFont(12, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
             CLEARTYPE_QUALITY, FIXED_PITCH | FF_MODERN, "Consolas");
 
         int y = 10;
+        const int LH = 26;  // Label height
+        const int IH = 22;  // Input height
+        const int GAP = 8;
 
-        // Title
-        HWND hTitle = CreateWindow("STATIC", "MIDI to Psych Engine Converter",
-            WS_VISIBLE | WS_CHILD | SS_CENTER, 10, y, 760, 30, hwnd, NULL, NULL, NULL);
+        // ════ TITLE ════
+        HWND hTitle = CreateWindow("STATIC", "MIDI to Psych Converter v2.4",
+            WS_VISIBLE | WS_CHILD | SS_LEFT, 15, y, 600, LH, hwnd, NULL, NULL, NULL);
         SendMessage(hTitle, WM_SETFONT, (WPARAM)g_hTitleFont, TRUE);
-        y += 40;
+        y += LH + 8;
 
-        // ── File inputs ──────────────────────────────────────────────────
-        CreateWindow("STATIC", "Input Files:", WS_VISIBLE | WS_CHILD,
-            10, y, 200, 20, hwnd, NULL, NULL, NULL);
-        y += 25;
+        // ════ FILES SECTION ════
+        CreateWindow("STATIC", "=====  FILES  =====", WS_VISIBLE | WS_CHILD | SS_LEFT,
+            15, y, 750, 14, hwnd, NULL, NULL, NULL);
+        y += 18;
 
-        auto makeFileLine = [&](const char* label, HWND& edit, int id, HMENU btnId,
-                                const char* defText) {
-            CreateWindow("STATIC", label, WS_VISIBLE | WS_CHILD,
-                10, y, 100, 20, hwnd, NULL, NULL, NULL);
-            edit = CreateWindow("EDIT", defText, WS_VISIBLE | WS_CHILD | WS_BORDER | ES_AUTOHSCROLL,
-                110, y, 550, 22, hwnd, (HMENU)id, NULL, NULL);
-            CreateWindow("BUTTON", "Browse...", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-                670, y, 100, 22, hwnd, btnId, NULL, NULL);
+        auto makeFileRow = [&](const char* label, HWND& edit, int id, HMENU btnId) {
+            CreateWindow("STATIC", label, WS_VISIBLE | WS_CHILD | SS_RIGHT,
+                15, y, 65, IH, hwnd, NULL, NULL, NULL);
+            edit = CreateWindow("EDIT", "", WS_VISIBLE | WS_CHILD | WS_BORDER | ES_AUTOHSCROLL,
+                85, y, 580, IH, hwnd, (HMENU)id, NULL, NULL);
+            CreateWindow("BUTTON", "Browse", WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
+                670, y, 90, IH, hwnd, btnId, NULL, NULL);
             SendMessage(edit, WM_SETFONT, (WPARAM)g_hFont, TRUE);
-            y += 30;
+            y += LH;
         };
 
-        makeFileLine("Player 1 MIDI:", g_hP1Edit,  ID_EDIT_P1,  (HMENU)ID_BTN_P1_BROWSE,  "");
-        makeFileLine("Player 2 MIDI:", g_hP2Edit,  ID_EDIT_P2,  (HMENU)ID_BTN_P2_BROWSE,  "");
-        makeFileLine("Output JSON:",   g_hOutEdit, ID_EDIT_OUT, (HMENU)ID_BTN_OUT_BROWSE, "chart.json");
-        y += 10;
+        makeFileRow("P1:", g_hP1Edit,  ID_EDIT_P1,  (HMENU)ID_BTN_P1_BROWSE);
+        makeFileRow("P2:", g_hP2Edit,  ID_EDIT_P2,  (HMENU)ID_BTN_P2_BROWSE);
+        makeFileRow("Out:", g_hOutEdit, ID_EDIT_OUT, (HMENU)ID_BTN_OUT_BROWSE);
+        SetWindowText(g_hOutEdit, "chart.json");
 
-        // ── Chart settings ───────────────────────────────────────────────
-        CreateWindow("STATIC", "Chart Settings:", WS_VISIBLE | WS_CHILD,
-            10, y, 200, 20, hwnd, NULL, NULL, NULL);
-        y += 25;
+        y += GAP;
 
-        // Row 1
-        auto label = [&](const char* t, int x) {
-            CreateWindow("STATIC", t, WS_VISIBLE | WS_CHILD, x, y, 80, 20, hwnd, NULL, NULL, NULL);
-        };
-        auto edit = [&](HWND& h, int id, int x, int w, const char* def) {
+        // ════ CONVERSION SETTINGS ════
+        CreateWindow("STATIC", "=====  CONVERSION  =====", WS_VISIBLE | WS_CHILD | SS_LEFT,
+            15, y, 750, 14, hwnd, NULL, NULL, NULL);
+        y += 18;
+
+        auto makeConvRow = [&](const char* label, HWND& h, int id, int xPos, int w, const char* def) {
+            CreateWindow("STATIC", label, WS_VISIBLE | WS_CHILD | SS_RIGHT,
+                xPos, y, 65, IH, hwnd, NULL, NULL, NULL);
             h = CreateWindow("EDIT", def, WS_VISIBLE | WS_CHILD | WS_BORDER | ES_AUTOHSCROLL,
-                x, y, w, 22, hwnd, (HMENU)id, NULL, NULL);
+                xPos + 70, y, w, IH, hwnd, (HMENU)id, NULL, NULL);
             SendMessage(h, WM_SETFONT, (WPARAM)g_hFont, TRUE);
         };
 
-        label("Song Name:", 10);   edit(g_hSongEdit,  ID_EDIT_SONG,   95,  120, "Converted");
-        label("BPM Mult:",  230);  edit(g_hBPMEdit,   ID_EDIT_BPM,    305,  60, "1.0");
-        label("Speed:",     380);  edit(g_hSpeedEdit, ID_EDIT_SPEED,  435,  60, "2.5");
-        label("Mania:",     510);  edit(g_hManiaEdit, ID_EDIT_MANIA,  565,  40, "3");
-        y += 30;
+        // Row 1: Song, BPM, Speed, Mania
+        makeConvRow("Song:",   g_hSongEdit,    ID_EDIT_SONG,    15, 150, "Converted");
+        makeConvRow("BPM:",    g_hBPMEdit,     ID_EDIT_BPM,     260, 50, "1.0");
+        makeConvRow("Speed:",  g_hSpeedEdit,   ID_EDIT_SPEED,   380, 50, "2.5");
+        makeConvRow("Mania:",  g_hManiaEdit,   ID_EDIT_MANIA,   520, 50, "3");
+        y += LH;
 
-        // Row 2
-        label("Min Vel:",  10);   edit(g_hVelEdit,  ID_EDIT_VELOCITY,  95, 60, "0");
-        label("Precision:", 170); edit(g_hPrecEdit, ID_EDIT_PRECISION, 245, 40, "6");
-        label("Offset(ms):", 300); edit(g_hOffsetEdit, ID_EDIT_OFFSET, 385, 60, "0");
+        // Row 2: Vel, Precision, Offset, Round
+        makeConvRow("Min Vel:", g_hVelEdit,      ID_EDIT_VELOCITY, 15, 50, "0");
+        makeConvRow("Prec:",    g_hPrecEdit,     ID_EDIT_PRECISION, 260, 50, "6");
+        makeConvRow("Offset:",  g_hOffsetEdit,   ID_EDIT_OFFSET,    380, 50, "0");
+        makeConvRow("Round:",   g_hRoundEdit,    ID_EDIT_ROUND,     520, 50, "-1");
+        y += LH + GAP;
 
-        g_hSustainCheck = CreateWindow("BUTTON", "Sustain Notes",
-            WS_VISIBLE | WS_CHILD | BS_AUTOCHECKBOX, 300, y, 120, 22,
-            hwnd, (HMENU)ID_CHECK_SUSTAIN, NULL, NULL);
-        SendMessage(g_hSustainCheck, WM_SETFONT, (WPARAM)g_hFont, TRUE);
+        // ════ OPTIONS ════
+        CreateWindow("STATIC", "=====  OPTIONS  =====", WS_VISIBLE | WS_CHILD | SS_LEFT,
+            15, y, 750, 14, hwnd, NULL, NULL, NULL);
+        y += 18;
 
-        g_hPrecisionCheck = CreateWindow("BUTTON", "High Precision",
-            WS_VISIBLE | WS_CHILD | BS_AUTOCHECKBOX, 430, y, 130, 22,
-            hwnd, (HMENU)ID_CHECK_PRECISION, NULL, NULL);
-        SendMessage(g_hPrecisionCheck, BM_SETCHECK, BST_CHECKED, 0);
-        SendMessage(g_hPrecisionCheck, WM_SETFONT, (WPARAM)g_hFont, TRUE);
-        y += 30;
+        auto makeCheckbox = [&](const char* label, HWND& h, int id, int xPos, bool checked = false) {
+            h = CreateWindow("BUTTON", label, WS_VISIBLE | WS_CHILD | BS_AUTOCHECKBOX,
+                xPos, y, 140, IH, hwnd, (HMENU)id, NULL, NULL);
+            if (checked) SendMessage(h, BM_SETCHECK, BST_CHECKED, 0);
+            SendMessage(h, WM_SETFONT, (WPARAM)g_hFont, TRUE);
+        };
 
-        // Row 3 – split / minify / rounding
-        g_hSplitCheck = CreateWindow("BUTTON", "Split Output",
-            WS_VISIBLE | WS_CHILD | BS_AUTOCHECKBOX, 10, y, 110, 22,
-            hwnd, (HMENU)ID_CHECK_SPLIT, NULL, NULL);
-        SendMessage(g_hSplitCheck, WM_SETFONT, (WPARAM)g_hFont, TRUE);
+        makeCheckbox("High Precision",       g_hPrecisionCheck, ID_CHECK_PRECISION, 15, true);
+        makeCheckbox("Sustain Notes",        g_hSustainCheck,   ID_CHECK_SUSTAIN,   165);
+        makeCheckbox("Minify JSON",          g_hMinifyCheck,    ID_CHECK_MINIFY,    315, true);
+        makeCheckbox("Smart Pitch Mapping",  g_hSmartMapCheck,  ID_CHECK_SMART_MAP, 465, true);
+        y += LH;
 
-        CreateWindow("STATIC", "Notes/File:", WS_VISIBLE | WS_CHILD,
-            130, y, 80, 20, hwnd, NULL, NULL, NULL);
-        edit(g_hSplitNotesEdit, ID_EDIT_SPLIT_NOTES, 215, 70, "1000");
+        makeCheckbox("Split Output", g_hSplitCheck, ID_CHECK_SPLIT, 15);
+        CreateWindow("STATIC", "Notes/File:", WS_VISIBLE | WS_CHILD | SS_RIGHT,
+            165, y + 2, 65, IH, hwnd, NULL, NULL, NULL);
+        g_hSplitNotesEdit = CreateWindow("EDIT", "1000", WS_VISIBLE | WS_CHILD | WS_BORDER,
+            235, y, 70, IH, hwnd, (HMENU)ID_EDIT_SPLIT_NOTES, NULL, NULL);
+        SendMessage(g_hSplitNotesEdit, WM_SETFONT, (WPARAM)g_hFont, TRUE);
+        y += LH + GAP;
 
-        g_hMinifyCheck = CreateWindow("BUTTON", "Minify JSON",
-            WS_VISIBLE | WS_CHILD | BS_AUTOCHECKBOX, 300, y, 110, 22,
-            hwnd, (HMENU)ID_CHECK_MINIFY, NULL, NULL);
-        SendMessage(g_hMinifyCheck, WM_SETFONT, (WPARAM)g_hFont, TRUE);
-        SendMessage(g_hMinifyCheck, BM_SETCHECK, BST_CHECKED, 0);
+        // ════ CHARACTER SETTINGS ════
+        CreateWindow("STATIC", "=====  CHARACTERS  =====", WS_VISIBLE | WS_CHILD | SS_LEFT,
+            15, y, 750, 14, hwnd, NULL, NULL, NULL);
+        y += 18;
 
-        CreateWindow("STATIC", "Round to:", WS_VISIBLE | WS_CHILD,
-            420, y, 70, 20, hwnd, NULL, NULL, NULL);
-        edit(g_hRoundEdit, ID_EDIT_ROUND, 495, 50, "-1");
+        auto makeCharRow = [&](const char* label, HWND& h, int id, int xPos, const char* def) {
+            CreateWindow("STATIC", label, WS_VISIBLE | WS_CHILD | SS_RIGHT,
+                xPos, y, 55, IH, hwnd, NULL, NULL, NULL);
+            h = CreateWindow("EDIT", def, WS_VISIBLE | WS_CHILD | WS_BORDER,
+                xPos + 60, y, 90, IH, hwnd, (HMENU)id, NULL, NULL);
+            SendMessage(h, WM_SETFONT, (WPARAM)g_hFont, TRUE);
+        };
 
-        CreateWindow("STATIC", "(-1=off, 0=int, 1=0.1)", WS_VISIBLE | WS_CHILD | SS_RIGHT,
-            555, y, 100, 20, hwnd, NULL, NULL, NULL);
-        y += 30;
+        makeCharRow("P1:",    g_hP1CharEdit,  ID_EDIT_P1CHAR,  15,  "bf");
+        makeCharRow("P2:",    g_hP2CharEdit,  ID_EDIT_P2CHAR,  200, "dad");
+        makeCharRow("GF:",    g_hGFCharEdit,  ID_EDIT_GFCHAR,  385, "gf");
+        makeCharRow("Stage:", g_hStageEdit,   ID_EDIT_STAGE,   570, "stage");
+        y += LH + GAP + 4;
 
-        // Row 4 – character names
-        label("P1 Char:",  10);  edit(g_hP1CharEdit, ID_EDIT_P1CHAR,  75,  80, "bf");
-        label("P2 Char:", 170);  edit(g_hP2CharEdit, ID_EDIT_P2CHAR, 235,  80, "dad");
-        label("GF Char:", 330);  edit(g_hGFCharEdit, ID_EDIT_GFCHAR, 395,  80, "gf");
-        label("Stage:",   490);  edit(g_hStageEdit,  ID_EDIT_STAGE,  545, 110, "stage");
-        y += 35;
-
-        // Progress bar + Convert button
+        // ════ ACTION BAR ════
         g_hProgress = CreateWindowEx(0, PROGRESS_CLASS, NULL,
             WS_VISIBLE | WS_CHILD | PBS_SMOOTH,
-            10, y, 660, 25, hwnd, (HMENU)ID_PROGRESS, NULL, NULL);
+            15, y, 640, 20, hwnd, (HMENU)ID_PROGRESS, NULL, NULL);
         SendMessage(g_hProgress, PBM_SETRANGE, 0, MAKELPARAM(0, 100));
-        SendMessage(g_hProgress, PBM_SETSTEP,  1, 0);
+        SendMessage(g_hProgress, PBM_SETSTEP, 1, 0);
 
-        HWND hConvert = CreateWindow("BUTTON", "CONVERT",
+        HWND hConvert = CreateWindow("BUTTON", "► CONVERT",
             WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-            680, y, 90, 25, hwnd, (HMENU)ID_BTN_CONVERT, NULL, NULL);
+            665, y, 95, 20, hwnd, (HMENU)ID_BTN_CONVERT, NULL, NULL);
         SendMessage(hConvert, WM_SETFONT, (WPARAM)g_hFont, TRUE);
-        y += 35;
+        y += 28;
 
-        // Console
-        CreateWindow("STATIC", "Console Output:", WS_VISIBLE | WS_CHILD,
-            10, y, 200, 20, hwnd, NULL, NULL, NULL);
+        // ════ CONSOLE ════
+        CreateWindow("STATIC", "Console Output", WS_VISIBLE | WS_CHILD,
+            15, y, 150, 14, hwnd, NULL, NULL, NULL);
         HWND hClear = CreateWindow("BUTTON", "Clear",
             WS_VISIBLE | WS_CHILD | BS_PUSHBUTTON,
-            680, y, 90, 22, hwnd, (HMENU)ID_BTN_CLEAR_LOG, NULL, NULL);
+            665, y, 95, 18, hwnd, (HMENU)ID_BTN_CLEAR_LOG, NULL, NULL);
         SendMessage(hClear, WM_SETFONT, (WPARAM)g_hFont, TRUE);
-        y += 25;
+        y += 22;
 
         LoadLibrary("Msftedit.dll");
         g_hConsole = CreateWindowExW(WS_EX_CLIENTEDGE, MSFTEDIT_CLASS, L"",
             WS_VISIBLE | WS_CHILD | WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY,
-            10, y, 760, 220, hwnd, (HMENU)ID_CONSOLE, NULL, NULL);
+            15, y, 745, 160, hwnd, (HMENU)ID_CONSOLE, NULL, NULL);
         SendMessage(g_hConsole, WM_SETFONT, (WPARAM)g_hConsoleFont, TRUE);
         SendMessage(g_hConsole, EM_SETBKGNDCOLOR, 0, RGB(20, 20, 30));
 
         guiLogger.setConsole(g_hConsole);
-
-        guiLogger.logColored("MIDI to Psych Engine Converter v2.4\n", CYAN);
-        guiLogger.logColored("Ready to convert!\n\n", GREEN);
-        guiLogger.logColored("Optimizations active:\n", YELLOW);
-        guiLogger.log("  - Parallel MIDI parsing\n");
-        guiLogger.log("  - Smart decimal removal\n");
-        guiLogger.log("  - Minify JSON (enabled by default)\n");
-        guiLogger.log("  - Round times option\n");
-        guiLogger.log("  - Parallel sort (auto for 10k+ notes)\n");
-        guiLogger.log("  - Two-pointer O(n) section sweep\n");
-        guiLogger.log("  - Split output\n\n");
+        guiLogger.logColored("MIDI to Psych Converter v2.4 Ready!\n", CYAN);
+        guiLogger.logColored("Optimized for spamcharts & dense charts.\n\n", YELLOW);
         break;
+
+
+
     }
 
     case WM_COMMAND:

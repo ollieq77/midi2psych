@@ -1,201 +1,274 @@
 @echo off
-setlocal EnableDelayedExpansion
+setlocal EnableExtensions
 title MIDI2Psych Builder
 
 :: ============================================================
-::  MIDI2Psych Builder for Windows  [MinGW-w64 / No VS needed]
-::  Customize the CONFIG section below to suit your setup.
+::  MIDI2Psych Builder  |  MinGW-w64  |  No Visual Studio
+:: ============================================================
+::
+::  CONFIGURATION -- edit these, nothing else needs touching
+::
+::    BUILD_TYPE   release | debug | asan
+::    WARN_LEVEL   minimal | normal | strict
+::    STD          c++14 | c++17 | c++20 | c++23
+::    BUNDLE_DLLS  space-separated DLL filenames from MinGW bin
+::                 release mode statically links libgcc + libstdc++
+::                 so only libwinpthread-1.dll is usually needed
+::    COPY_ASSETS  1 = copy assets\ folder into release, 0 = skip
+::    MAKE_ZIP     1 = zip up the release folder, 0 = skip
+::
 :: ============================================================
 
-:: -- CONFIG --------------------------------------------------
-set BUILD_TYPE=debug
-:: Options: release | debug | asan
-::   release  -> -O3, -march=native, -flto, stripped binary
-::   debug    -> -O0, -g, full symbols, assertions on
-::   asan     -> -O1, -g, AddressSanitizer (MinGW support varies)
-
+set BUILD_TYPE=release
 set WARN_LEVEL=normal
-:: Options: minimal | normal | strict
-::   minimal  -> -w (suppress all warnings)
-::   normal   -> -Wall -Wextra
-::   strict   -> -Wall -Wextra -Wpedantic -Werror
-
 set STD=c++17
-:: Options: c++14 | c++17 | c++20 | c++23
-
 set EXTRA_FLAGS=
-:: Add any custom flags here, e.g.: -DFEATURE_X=1 -funroll-loops
-:: ------------------------------------------------------------
+set BUNDLE_DLLS=libwinpthread-1.dll
+set COPY_ASSETS=1
+set MAKE_ZIP=0
+
+:: ============================================================
+::  Nothing below this line should need editing
+:: ============================================================
 
 cls
 echo.
-echo  ==========================================
+echo  =========================================
 echo   MIDI2Psych Builder  ^|  MinGW-w64
-echo   No Visual Studio required
-echo  ==========================================
+echo  =========================================
 echo.
 
-:: -- Timestamp (PowerShell, works on Win 10/11) --------------
-for /f "usebackq delims=" %%T in (`powershell -NoProfile -Command "Get-Date -Format 'yyyy-MM-dd HH:mm:ss'"`) do set BUILD_TIME=%%T
+:: Timestamp (no delayed expansion needed here)
+for /f "usebackq delims=" %%T in (
+    `powershell -NoProfile -Command "Get-Date -Format 'yyyy-MM-dd HH:mm:ss'"`
+) do set BUILD_TIME=%%T
 
-echo  >> Build started : %BUILD_TIME%
-echo  >> Profile       : %BUILD_TYPE% ^| std=%STD% ^| warnings=%WARN_LEVEL%
+echo  Started  : %BUILD_TIME%
+echo  Profile  : %BUILD_TYPE%  /  std=%STD%  /  warnings=%WARN_LEVEL%
 echo.
 
-:: -- Check for g++ -------------------------------------------
+:: ---- Locate g++ ----
 where g++ >nul 2>&1
-if %ERRORLEVEL% neq 0 (
-    call :print_error "g++ not found on PATH"
+if errorlevel 1 (
+    echo  [FAIL] g++ not found on PATH.
     echo.
-    echo  Fix options:
-    echo    1. Download MinGW-w64 from https://winlibs.com/
-    echo    2. Extract to C:\mingw64
-    echo    3. Add C:\mingw64\bin to your PATH
-    echo    4. Restart this terminal and try again
+    echo         Install MinGW-w64 via one of:
+    echo           WinLibs  --  https://winlibs.com/
+    echo           MSYS2    --  winget install -e --id MSYS2.MSYS2
     echo.
-    echo  Quick install via winget:
-    echo    winget install -e --id MSYS2.MSYS2
+    echo         Then add its bin folder to PATH and reopen this terminal.
     echo.
-    pause
-    exit /b 1
+    pause & exit /b 1
 )
 
-for /f "tokens=1,2,3" %%A in ('g++ --version 2^>^&1') do (
-    set COMPILER_VER=%%A %%B %%C
-    goto :compiler_found
+for /f "delims=" %%P in ('where g++ 2^>nul') do (
+    set GPP_EXE=%%P
+    goto :found_gpp
 )
-:compiler_found
-echo  >> Compiler : !COMPILER_VER!
+:found_gpp
+
+for %%D in ("%GPP_EXE%") do set MINGW_BIN=%%~dpD
+:: strip trailing backslash
+if "%MINGW_BIN:~-1%"=="\" set MINGW_BIN=%MINGW_BIN:~0,-1%
+
+for /f "delims=" %%V in ('g++ --version 2^>nul') do (
+    set COMPILER_VER=%%V
+    goto :found_ver
+)
+:found_ver
+
+echo  Compiler : %COMPILER_VER%
+echo  MinGW    : %MINGW_BIN%
 echo.
 
-:: -- Resolve paths -------------------------------------------
+:: ---- Paths ----
 set SCRIPT_DIR=%~dp0
-set REPO_ROOT=%SCRIPT_DIR%..\
-set OUT_DIR=%REPO_ROOT%dist
-set SRC_DIR=%REPO_ROOT%src
-set INCLUDE_DIR=%REPO_ROOT%include
+for %%R in ("%SCRIPT_DIR%..") do set REPO_ROOT=%%~fR
 
-:: -- Verify required source files exist ----------------------
-echo  [*] Checking source files...
-set MISSING_FILES=0
-for %%F in (main.cpp midi_parser.cpp psych_converter.cpp gui.cpp gui_logger.cpp progress_bar.cpp) do (
-    if not exist "%SRC_DIR%\%%F" (
-        call :print_warn "Missing: src\%%F"
-        set /a MISSING_FILES+=1
+set SRC=%REPO_ROOT%\src
+set INC=%REPO_ROOT%\include
+set ASSETS=%REPO_ROOT%\assets
+set BUILD=%REPO_ROOT%\dist\build
+set RELEASE=%REPO_ROOT%\dist\release
+set ZIPS=%REPO_ROOT%\dist\zips
+
+:: ---- Clean stray files left by the old script ----
+echo  [....] Cleaning stray files
+set _FOUND=no
+for %%F in (
+    "%REPO_ROOT%\Build"          "%REPO_ROOT%\Compiler"
+    "%REPO_ROOT%\Profile"        "%REPO_ROOT%\MinGW"
+    "%REPO_ROOT%\g++"            "%REPO_ROOT%\midi2psych.exe"
+    "%REPO_ROOT%\midi2psych_debug.exe"  "%REPO_ROOT%\midi2psych_asan.exe"
+    "%SCRIPT_DIR%Build"          "%SCRIPT_DIR%Compiler"
+    "%SCRIPT_DIR%Profile"        "%SCRIPT_DIR%midi2psych.exe"
+    "%SCRIPT_DIR%midi2psych_debug.exe"  "%SCRIPT_DIR%midi2psych_asan.exe"
+    "%REPO_ROOT%\dist\midi2psych.exe"
+    "%REPO_ROOT%\dist\midi2psych_debug.exe"
+    "%REPO_ROOT%\dist\midi2psych_asan.exe"
+) do (
+    if exist %%F (
+        del /f /q %%F >nul 2>&1
+        echo         Removed: %%~F
+        set _FOUND=yes
+    )
+)
+if "%_FOUND%"=="no" echo         Nothing to remove
+echo.
+
+:: ---- Check source files ----
+echo  [....] Checking source files
+set SRC_OK=yes
+for %%F in (
+    main.cpp  midi_parser.cpp  psych_converter.cpp
+    gui.cpp   gui_logger.cpp   progress_bar.cpp
+) do (
+    if exist "%SRC%\%%F" (
+        echo         OK  %%F
     ) else (
-        echo    [OK] src\%%F
+        echo         MISSING  %%F
+        set SRC_OK=no
     )
 )
-if !MISSING_FILES! gtr 0 (
+
+if "%SRC_OK%"=="no" (
     echo.
-    call :print_error "!MISSING_FILES! source file(s) missing -- aborting"
-    pause
-    exit /b 1
+    echo  [FAIL] One or more source files are missing. Cannot continue.
+    echo.
+    pause & exit /b 1
 )
 echo.
 
-:: -- Create output dir ---------------------------------------
-if not exist "%OUT_DIR%" (
-    mkdir "%OUT_DIR%"
-    echo  [*] Created output dir: %OUT_DIR%
-    echo.
-)
+:: ---- Create output dirs ----
+if not exist "%BUILD%"   mkdir "%BUILD%"   >nul 2>&1
+if not exist "%RELEASE%" mkdir "%RELEASE%" >nul 2>&1
+if not exist "%ZIPS%"    mkdir "%ZIPS%"    >nul 2>&1
 
-:: -- Build flags by profile ----------------------------------
+:: ---- Resolve build flags ----
 if /i "%BUILD_TYPE%"=="release" (
-    set OPT_FLAGS=-O3 -march=native -flto -s -DNDEBUG
-    set OUT_NAME=midi2psych.exe
+    set OPT=-O3 -march=native -flto -s -DNDEBUG -static-libgcc -static-libstdc++
+    set OUT=midi2psych.exe
 ) else if /i "%BUILD_TYPE%"=="debug" (
-    set OPT_FLAGS=-O0 -g -DDEBUG
-    set OUT_NAME=midi2psych_debug.exe
+    set OPT=-O0 -g -DDEBUG
+    set OUT=midi2psych_debug.exe
 ) else if /i "%BUILD_TYPE%"=="asan" (
-    set OPT_FLAGS=-O1 -g -fsanitize=address,undefined
-    set OUT_NAME=midi2psych_asan.exe
+    set OPT=-O1 -g -fsanitize=address,undefined
+    set OUT=midi2psych_asan.exe
 ) else (
-    call :print_error "Unknown BUILD_TYPE: %BUILD_TYPE% -- use release, debug, or asan"
-    pause
-    exit /b 1
+    echo  [FAIL] Unknown BUILD_TYPE "%BUILD_TYPE%" -- use release, debug, or asan
+    pause & exit /b 1
 )
 
-:: -- Warning flags --------------------------------------------
 if /i "%WARN_LEVEL%"=="minimal" (
-    set WARN_FLAGS=-w
+    set WARN=-w
 ) else if /i "%WARN_LEVEL%"=="normal" (
-    set WARN_FLAGS=-Wall -Wextra
+    set WARN=-Wall -Wextra
 ) else if /i "%WARN_LEVEL%"=="strict" (
-    set WARN_FLAGS=-Wall -Wextra -Wpedantic -Werror
+    set WARN=-Wall -Wextra -Wpedantic -Werror
 ) else (
-    call :print_error "Unknown WARN_LEVEL: %WARN_LEVEL% -- use minimal, normal, or strict"
-    pause
-    exit /b 1
+    echo  [FAIL] Unknown WARN_LEVEL "%WARN_LEVEL%" -- use minimal, normal, or strict
+    pause & exit /b 1
 )
 
-:: -- Compile -------------------------------------------------
-echo  [*] Building [%BUILD_TYPE%] -> %OUT_NAME%
-echo  ------------------------------------------
+:: ---- Compile ----
+echo  [....] Building %OUT% (%BUILD_TYPE%)
 echo.
 
-g++ -std=%STD% ^
-    %OPT_FLAGS% ^
-    %WARN_FLAGS% ^
-    %EXTRA_FLAGS% ^
-    -I"%INCLUDE_DIR%" ^
-    -mwindows ^
-    -o "%OUT_DIR%\%OUT_NAME%" ^
-    "%SRC_DIR%\main.cpp" ^
-    "%SRC_DIR%\midi_parser.cpp" ^
-    "%SRC_DIR%\psych_converter.cpp" ^
-    "%SRC_DIR%\gui.cpp" ^
-    "%SRC_DIR%\gui_logger.cpp" ^
-    "%SRC_DIR%\progress_bar.cpp" ^
-    -lcomctl32 -lcomdlg32 -lgdi32 -lshell32 2>&1
+g++ -std=%STD% %OPT% %WARN% %EXTRA_FLAGS% ^
+    -I"%INC%" -mwindows ^
+    -o "%BUILD%\%OUT%" ^
+    "%SRC%\main.cpp" ^
+    "%SRC%\midi_parser.cpp" ^
+    "%SRC%\psych_converter.cpp" ^
+    "%SRC%\gui.cpp" ^
+    "%SRC%\gui_logger.cpp" ^
+    "%SRC%\progress_bar.cpp" ^
+    -lcomctl32 -lcomdlg32 -lgdi32 -lshell32
 
-set BUILD_RESULT=%ERRORLEVEL%
+if errorlevel 1 goto :build_failed
 
-:: -- Result --------------------------------------------------
+:: ---- Stage release ----
 echo.
-if %BUILD_RESULT% equ 0 (
-    for %%A in ("%OUT_DIR%\%OUT_NAME%") do (
-        set FILE_SIZE=%%~zA
-        set FILE_PATH=%%~fA
+echo  [....] Staging release folder
+
+copy /Y "%BUILD%\%OUT%" "%RELEASE%\" >nul 2>&1
+echo         %OUT%
+
+for %%D in (%BUNDLE_DLLS%) do (
+    if exist "%MINGW_BIN%\%%D" (
+        copy /Y "%MINGW_BIN%\%%D" "%RELEASE%\" >nul 2>&1
+        echo         %%D
+    ) else (
+        echo         SKIP  %%D  (not in MinGW bin)
     )
-    set /a FILE_SIZE_KB=!FILE_SIZE! / 1024
-
-    echo  ==========================================
-    echo   BUILD SUCCESSFUL
-    echo  ==========================================
-    echo.
-    echo  Output  : !FILE_PATH!
-    echo  Size    : !FILE_SIZE! bytes  (~!FILE_SIZE_KB! KB^)
-    echo  Profile : %BUILD_TYPE%
-    echo.
-    echo  Test it:
-    echo    "%OUT_DIR%\%OUT_NAME%" -h
-    echo.
-    pause
-    exit /b 0
 )
 
-echo  ==========================================
-echo   BUILD FAILED
-echo  ==========================================
+if "%COPY_ASSETS%"=="1" (
+    if exist "%ASSETS%" (
+        if exist "%RELEASE%\assets" rmdir /s /q "%RELEASE%\assets" >nul 2>&1
+        xcopy "%ASSETS%" "%RELEASE%\assets\" /E /I /H /Y >nul 2>&1
+        echo         assets\
+    )
+)
+
+for %%F in (README.md README.txt LICENSE LICENSE.txt CHANGELOG.md) do (
+    if exist "%REPO_ROOT%\%%F" (
+        copy /Y "%REPO_ROOT%\%%F" "%RELEASE%\" >nul 2>&1
+        echo         %%F
+    )
+)
+
+:: ---- Build info ----
+echo App        = MIDI2Psych        > "%RELEASE%\build-info.txt"
+echo Built      = %BUILD_TIME%     >> "%RELEASE%\build-info.txt"
+echo Profile    = %BUILD_TYPE%     >> "%RELEASE%\build-info.txt"
+echo Compiler   = %COMPILER_VER%   >> "%RELEASE%\build-info.txt"
+echo Std        = %STD%            >> "%RELEASE%\build-info.txt"
+echo Warnings   = %WARN_LEVEL%     >> "%RELEASE%\build-info.txt"
+echo Binary     = %OUT%            >> "%RELEASE%\build-info.txt"
+
+:: ---- Optional ZIP ----
+if "%MAKE_ZIP%"=="1" (
+    echo.
+    echo  [....] Creating ZIP
+    set ZIP_OUT=%ZIPS%\midi2psych_%BUILD_TYPE%.zip
+    powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+        "Compress-Archive -Path '%RELEASE%\*' -DestinationPath '%ZIPS%\midi2psych_%BUILD_TYPE%.zip' -Force" >nul 2>&1
+    if exist "%ZIPS%\midi2psych_%BUILD_TYPE%.zip" (
+        echo         %ZIPS%\midi2psych_%BUILD_TYPE%.zip
+    ) else (
+        echo         WARN: ZIP did not complete
+    )
+)
+
+:: ---- Done ----
+for %%S in ("%RELEASE%\%OUT%") do set FILE_KB=%%~zS
+set /a FILE_KB=%FILE_KB% / 1024
+
 echo.
-echo  [!!] Exit code : %BUILD_RESULT%
+echo  =========================================
+echo   BUILD SUCCESSFUL
+echo  =========================================
 echo.
-echo  Common causes:
-echo    - Syntax error in your source files (check above)
-echo    - Missing #include or mismatched header
-echo    - -march=native unsupported on your CPU (try removing it)
-echo    - -flto issues: remove it from OPT_FLAGS in this script
+echo   Binary  : %RELEASE%\%OUT%
+echo   Size    : %FILE_KB% KB
+echo   Folder  : %RELEASE%
 echo.
 pause
-exit /b %BUILD_RESULT%
-
-:: -- Helpers -------------------------------------------------
-:print_error
-echo  [!!] ERROR: %~1
 exit /b 0
 
-:print_warn
-echo  [!!] WARN:  %~1
-exit /b 0
+:build_failed
+echo.
+echo  =========================================
+echo   BUILD FAILED
+echo  =========================================
+echo.
+echo   Check the compiler output above.
+echo.
+echo   Common fixes:
+echo     - Remove -march=native from OPT_FLAGS if your CPU does not support it
+echo     - Remove -flto if you get linker errors
+echo     - Check that all headers exist in include\
+echo.
+pause
+exit /b 1
