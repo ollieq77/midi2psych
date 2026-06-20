@@ -111,7 +111,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE /*hPrevInstance*/,
     RegisterClassEx(&wc);
 
     g_hMainWnd = CreateWindowEx(0,
-        "MIDI2PsychConverter", "MIDI to Psych Engine Converter v2.4",
+        "MIDI2PsychConverter", "MIDI to Psych Engine Converter V1.0",
         WS_OVERLAPPEDWINDOW & ~WS_THICKFRAME & ~WS_MAXIMIZEBOX,
         CW_USEDEFAULT, CW_USEDEFAULT, 800, 680,
         NULL, NULL, hInstance, NULL);

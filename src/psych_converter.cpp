@@ -240,7 +240,7 @@ bool PsychConverter::convert(const std::string& p1File,
     auto startTime = std::chrono::high_resolution_clock::now();
 
     guiLogger.logColored("\n================================================\n", CYAN);
-    guiLogger.logColored("    MIDI -> Psych Engine Converter v2.4\n",            CYAN);
+    guiLogger.logColored("    MIDI -> Psych Engine Converter V1.0\n",            CYAN);
     guiLogger.logColored("================================================\n\n",  CYAN);
 
     // ── Parallel MIDI parsing ──────────────────────────────────────────────

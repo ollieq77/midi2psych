@@ -160,7 +160,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         const int GAP = 8;
 
         // ════ TITLE ════
-        HWND hTitle = CreateWindow("STATIC", "MIDI to Psych Converter v2.4",
+        HWND hTitle = CreateWindow("STATIC", "MIDI to Psych Converter V1.0",
             WS_VISIBLE | WS_CHILD | SS_LEFT, 15, y, 600, LH, hwnd, NULL, NULL, NULL);
         SendMessage(hTitle, WM_SETFONT, (WPARAM)g_hTitleFont, TRUE);
         y += LH + 8;
@@ -290,7 +290,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         SendMessage(g_hConsole, EM_SETBKGNDCOLOR, 0, RGB(20, 20, 30));
 
         guiLogger.setConsole(g_hConsole);
-        guiLogger.logColored("MIDI to Psych Converter v2.4 Ready!\n", CYAN);
+        guiLogger.logColored("MIDI to Psych Converter V1.0 Ready!\n", CYAN);
         guiLogger.logColored("Optimized for spamcharts & dense charts.\n\n", YELLOW);
         break;
 
