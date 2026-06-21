@@ -23,7 +23,7 @@ set BUILD_TYPE=release
 set WARN_LEVEL=normal
 set STD=c++17
 set EXTRA_FLAGS=
-set BUNDLE_DLLS=libwinpthread-1.dll
+set BUNDLE_DLLS=
 set COPY_ASSETS=1
 set MAKE_ZIP=1
 
@@ -146,7 +146,7 @@ if not exist "%ZIPS%"    mkdir "%ZIPS%"    >nul 2>&1
 
 :: ---- Resolve build flags ----
 if /i "%BUILD_TYPE%"=="release" (
-    set OPT=-O3 -march=native -flto -s -DNDEBUG -static-libgcc -static-libstdc++
+        set OPT=-O3 -flto -s -DNDEBUG -static -static-libgcc -static-libstdc++
     set OUT=midi2psych.exe
 ) else if /i "%BUILD_TYPE%"=="debug" (
     set OPT=-O0 -g -DDEBUG
