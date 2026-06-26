@@ -20,6 +20,9 @@ title MIDI2Psych Builder
 :: ============================================================
 
 set BUILD_TYPE=release
+
+if "%~1" neq "" set BUILD_TYPE=%~1
+
 set WARN_LEVEL=normal
 set STD=c++17
 set EXTRA_FLAGS=
@@ -115,6 +118,15 @@ for %%F in (
 )
 if "%_FOUND%"=="no" echo         Nothing to remove
 echo.
+
+:: ---- CLEAN OLD OUTPUT ----
+echo  [....] Cleaning old build outputs
+
+if exist "%BUILD%"   rmdir /s /q "%BUILD%"
+if exist "%RELEASE%" rmdir /s /q "%RELEASE%"
+
+mkdir "%BUILD%" >nul 2>&1
+mkdir "%RELEASE%" >nul 2>&1
 
 :: ---- Check source files ----
 echo  [....] Checking source files
@@ -254,7 +266,6 @@ echo   Binary  : %RELEASE%\%OUT%
 echo   Size    : %FILE_KB% KB
 echo   Folder  : %RELEASE%
 echo.
-pause
 exit /b 0
 
 :build_failed

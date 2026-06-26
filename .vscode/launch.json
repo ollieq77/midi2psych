@@ -1,0 +1,37 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Run (Release)",
+            "type": "cppdbg",
+            "request": "launch",
+
+            "program": "${workspaceFolder}\\dist\\release\\midi2psych.exe",
+            "cwd": "${workspaceFolder}",
+
+            "MIMode": "gdb",
+            "miDebuggerPath": "gdb",
+
+            "externalConsole": false,
+            "stopAtEntry": false,
+
+            "preLaunchTask": "Build (Release)"
+        },
+        {
+            "name": "Debug (Debug build)",
+            "type": "cppdbg",
+            "request": "launch",
+
+            "program": "${workspaceFolder}\\dist\\build\\midi2psych.exe",
+            "cwd": "${workspaceFolder}",
+
+            "MIMode": "gdb",
+            "miDebuggerPath": "gdb",
+
+            "externalConsole": true,
+            "stopAtEntry": false,
+
+            "preLaunchTask": "Build (Debug)"
+        }
+    ]
+}
