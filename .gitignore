@@ -1,0 +1,11 @@
+# Build output
+dist/build/
+dist/release/
+dist/zips/
+
+# VS Code
+.vscode/
+
+# Compiled binaries
+*.exe
+*.o
