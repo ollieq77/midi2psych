@@ -1,7 +1,7 @@
 #include "midi_parser.h"
 
+#include <array>
 #include <fstream>
-#include <map>
 #include <vector>
 
 // ─── Private helpers ──────────────────────────────────────────────────────────
@@ -70,7 +70,8 @@ bool MIDIParser::parse(const std::string& filename, bool sustainNotes, int minVe
 
         uint32_t time          = 0;
         uint8_t  runningStatus = 0;
-        std::map<uint8_t, std::vector<std::pair<uint32_t, uint8_t>>> activeNotes;
+        // One stack of (start tick, velocity) per pitch for pairing note-ons with note-offs.
+        std::array<std::vector<std::pair<uint32_t, uint8_t>>, 256> activeNotes;
 
         while (m_pos < trackEnd && m_pos < m_data.size()) {
             uint32_t delta = readVarLen();
@@ -98,16 +99,14 @@ bool MIDIParser::parse(const std::string& filename, bool sustainNotes, int minVe
                     }
                 } else {   // note-off (0x80 or 0x90 vel=0)
                     if (sustainNotes) {
-                        auto it = activeNotes.find(note);
-                        if (it != activeNotes.end() && !it->second.empty()) {
-                            auto [startTime, startVel] = it->second.back();
-                            it->second.pop_back();
+                        auto& stack = activeNotes[note];
+                        if (!stack.empty()) {
+                            auto [startTime, startVel] = stack.back();
+                            stack.pop_back();
                             if (startVel >= static_cast<uint8_t>(minVelocity)) {
                                 uint32_t dur = time - startTime;
                                 events.emplace_back(startTime, note, startVel, dur);
                             }
-                            if (it->second.empty())
-                                activeNotes.erase(it);
                         }
                     }
                 }
