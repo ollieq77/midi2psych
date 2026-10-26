@@ -3,161 +3,218 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <execution>
+#include <cstdint>
+#include <cstdio>
+#include <cstring>
 #include <fstream>
 #include <future>
 #include <iomanip>
 #include <sstream>
-#include <cstdint>
-#include <unordered_map>
-#include <queue>
+#include <thread>
+
+#include <charconv>
 
 #include "gui_logger.h"
 #include "progress_bar.h"
 #include "utils.h"
 
-// ─── ticksToMs ───────────────────────────────────────────────────────────────
+// ─── Fast number formatting ───────────────────────────────────────────────────
 
-double PsychConverter::ticksToMs(uint32_t ticks, double finalBPM, uint16_t ppq,
-                                  const std::vector<TempoChange>& tempoChanges,
-                                  double multiplier) const {
-    if (tempoChanges.empty())
-        return (ticks * (60000.0 / finalBPM)) / ppq;
+namespace {
 
-    double   ms          = 0.0;
-    uint32_t lastTick    = 0;
-    double   currentBPM  = tempoChanges[0].bpm * multiplier;
+// Writes exactly what smartNumToStr() would (including its habit of leaving
+// "2.000000" alone), but without building an ostringstream for every number.
+// Writing 3-4 million of those was a big chunk of the old runtime.
+void appendNum(std::string& out, double num, int maxDecimals) {
+    char buf[512];
 
-    for (size_t i = 0; i < tempoChanges.size(); ++i) {
-        const auto& change = tempoChanges[i];
-
-        if (ticks <= change.tick) {
-            ms += ((ticks - lastTick) * (60000.0 / currentBPM)) / ppq;
-            return ms;
-        }
-
-        if (i + 1 >= tempoChanges.size() || ticks < tempoChanges[i + 1].tick) {
-            ms += ((change.tick - lastTick) * (60000.0 / currentBPM)) / ppq;
-            currentBPM = change.bpm * multiplier;
-            ms += ((ticks - change.tick) * (60000.0 / currentBPM)) / ppq;
-            return ms;
-        }
-
-        ms += ((change.tick - lastTick) * (60000.0 / currentBPM)) / ppq;
-        lastTick   = change.tick;
-        currentBPM = change.bpm * multiplier;
+    if (std::floor(num) == num) {
+        auto r = std::to_chars(buf, buf + sizeof(buf), static_cast<int64_t>(num));
+        out.append(buf, static_cast<size_t>(r.ptr - buf));
+        return;
     }
 
-    ms += ((ticks - lastTick) * (60000.0 / currentBPM)) / ppq;
-    return ms;
-}
+    if (maxDecimals < 0) maxDecimals = 6;   // what a negative precision means to printf
 
-// ─── getBPMAtTime ─────────────────────────────────────────────────────────────
+#if defined(__cpp_lib_to_chars) && __cpp_lib_to_chars >= 201611L
+    auto r = std::to_chars(buf, buf + sizeof(buf), num, std::chars_format::fixed, maxDecimals);
+    if (r.ec != std::errc()) { out += smartNumToStr(num, maxDecimals); return; }
+    size_t len = static_cast<size_t>(r.ptr - buf);
+#else
+    int n = std::snprintf(buf, sizeof(buf), "%.*f", maxDecimals, num);
+    if (n < 0 || n >= static_cast<int>(sizeof(buf))) { out += smartNumToStr(num, maxDecimals); return; }
+    size_t len = static_cast<size_t>(n);
+#endif
 
-double PsychConverter::getBPMAtTime(double time,
-                                     const std::vector<std::pair<double, double>>& timeToBPM,
-                                     double baseBPM) const {
-    if (timeToBPM.empty()) return baseBPM;
-    for (int i = static_cast<int>(timeToBPM.size()) - 1; i >= 0; --i) {
-        if (time >= timeToBPM[i].first)
-            return timeToBPM[i].second;
+    const void* dotp = std::memchr(buf, '.', len);
+    if (dotp) {
+        const size_t dotPos = static_cast<size_t>(static_cast<const char*>(dotp) - buf);
+        size_t keep = len;
+        while (keep > 0 && buf[keep - 1] == '0') --keep;       // keep = lastNonZero + 1
+        if (keep > 0 && keep - 1 > dotPos) len = keep;          // trim zeros after the dot
+        if (buf[len - 1] == '.') --len;
     }
-    return baseBPM;
+    out.append(buf, len);
 }
+
+inline void appendInt(std::string& out, int v) {
+    char buf[16];
+    auto r = std::to_chars(buf, buf + sizeof(buf), v);
+    out.append(buf, static_cast<size_t>(r.ptr - buf));
+}
+
+// Sorts v (made of consecutive pre-cut runs) by `cmp`: every run is sorted on its
+// own - several at once on multi-core machines - and then neighbouring runs are
+// merged pairwise. `starts` holds each run's first index plus v.size() at the end.
+// Way cheaper than one big sort when the input is already chunked by MIDI track.
+template <class Cmp>
+void sortRuns(std::vector<ChartNote>& v, std::vector<size_t> starts, Cmp cmp) {
+    if (starts.size() <= 2) {   // zero or one run: nothing to merge
+        std::sort(v.begin(), v.end(), cmp);
+        return;
+    }
+
+    const size_t maxThreads = std::max<size_t>(1, std::thread::hardware_concurrency());
+
+    // Runs `task(i)` for i in [0, count), never more than maxThreads at once.
+    auto runAll = [&](size_t count, auto&& task) {
+        std::vector<std::future<void>> pending;
+        for (size_t i = 0; i < count; ++i) {
+            pending.push_back(std::async(std::launch::async, [&task, i] { task(i); }));
+            if (pending.size() >= maxThreads) {
+                pending.front().get();
+                pending.erase(pending.begin());
+            }
+        }
+        for (auto& f : pending) f.get();
+    };
+
+    runAll(starts.size() - 1, [&](size_t r) {
+        std::sort(v.begin() + starts[r], v.begin() + starts[r + 1], cmp);
+    });
+
+    while (starts.size() > 2) {
+        const size_t runs = starts.size() - 1;
+        const size_t pairs = runs / 2;
+        runAll(pairs, [&](size_t p) {
+            const size_t r = p * 2;
+            std::inplace_merge(v.begin() + starts[r], v.begin() + starts[r + 1],
+                               v.begin() + starts[r + 2], cmp);
+        });
+
+        std::vector<size_t> next;
+        for (size_t r = 0; r < runs; r += 2) next.push_back(starts[r]);   // merged pair starts where its first run did
+        next.push_back(v.size());
+        starts = std::move(next);
+    }
+}
+
+}  // namespace
 
 // ─── buildJSON ────────────────────────────────────────────────────────────────
 
-std::string PsychConverter::buildJSON(const std::vector<Section>& sections,
+std::string PsychConverter::buildJSON(const Section* first, const Section* last,
                                        double finalBPM) const {
-    std::ostringstream json;
-    json << std::fixed;
-    if (m_config.highPrecision)
-        json << std::setprecision(m_config.decimalPlaces);
+    const int dp = m_config.decimalPlaces;
 
-    json << R"({"song":{"song":")" << m_config.songName << R"(","notes":[)";
+    size_t totalNotes = 0;
+    for (const Section* s = first; s != last; ++s) totalNotes += s->notes.size();
+
+    std::string json;
+    json.reserve(totalNotes * 32 + static_cast<size_t>(last - first) * 96 + 512);
+
+    json += R"({"song":{"song":")";
+    json += m_config.songName;
+    json += R"(","notes":[)";
 
     // One "step" is 1/4 beat (there are 16 steps per 4-beat section).
     // stepMs = (60000 / bpm) * 0.25 = 15000 / bpm
-    double stepMs = (finalBPM > 0.0) ? (15000.0 / finalBPM) : 0.0;
+    const double stepMs = (finalBPM > 0.0) ? (15000.0 / finalBPM) : 0.0;
 
-    for (size_t s = 0; s < sections.size(); ++s) {
-        if (s > 0) json << ",";
-        json << R"({"sectionNotes":[)";
+    const bool   doRound  = (m_config.roundTimesTo >= 0);
+    const double roundMul = doRound ? std::pow(10.0, m_config.roundTimesTo) : 1.0;
 
-        const auto& notes = sections[s].notes;
-        for (size_t i = 0; i < notes.size(); ++i) {
-            if (i > 0) json << ",";
+    for (const Section* s = first; s != last; ++s) {
+        if (s != first) json += ',';
+        json += R"({"sectionNotes":[)";
 
-            double time = notes[i].time;
-            double dur  = notes[i].duration;
+        bool firstNote = true;
+        for (const ChartNote& n : s->notes) {
+            if (!firstNote) json += ',';
+            firstNote = false;
 
-            if (m_config.roundTimesTo >= 0) {
-                double mult = std::pow(10.0, m_config.roundTimesTo);
-                time = std::round(time * mult) / mult;
-                dur  = std::round(dur  * mult) / mult;
+            double time = n.time;
+            double dur  = n.duration;
+
+            if (doRound) {
+                time = std::round(time * roundMul) / roundMul;
+                dur  = std::round(dur  * roundMul) / roundMul;
             }
 
             // Format: [ time, lane, holdLength, custom ]
-            // holdLength replaces the old placeholder (index 2). custom (index 3)
-            // is currently unused (0) but reserved for future data.
-            json << "[" << smartNumToStr(time, m_config.decimalPlaces)
-                 << "," << notes[i].lane << ",";
+            // custom (index 3) is currently unused (0) but reserved for later.
+            json += '[';
+            appendNum(json, time, dp);
+            json += ',';
+            appendInt(json, n.lane);
+            json += ',';
 
             // Only emit a hold length if it is at least one step long
-            bool isHold = (dur >= stepMs);
-            if (m_config.minifyJSON && !isHold) {
-                // Both holdLength and custom are zero
-                json << "0,0]";
+            if (dur >= stepMs) {
+                appendNum(json, dur, dp);
+                json += ",0]";
             } else {
-                if (isHold)
-                    json << smartNumToStr(dur, m_config.decimalPlaces) << ",0]";
-                else
-                    json << "0,0]";
+                json += "0,0]";
             }
         }
 
-        json << R"(],"lengthInSteps":16,"mustHitSection":)"
-             << (sections[s].mustHitSection ? "true" : "false")
-             << R"(,"changeBPM":)" << (sections[s].changeBPM ? "true" : "false")
-             << R"(,"bpm":)" << smartNumToStr(sections[s].bpm, m_config.decimalPlaces)
-             << "}";
+        json += R"(],"lengthInSteps":16,"mustHitSection":)";
+        json += s->mustHitSection ? "true" : "false";
+        json += R"(,"changeBPM":)";
+        json += s->changeBPM ? "true" : "false";
+        json += R"(,"bpm":)";
+        appendNum(json, s->bpm, dp);
+        json += '}';
     }
 
-    json << R"(],"bpm":)"      << smartNumToStr(finalBPM,           m_config.decimalPlaces)
-         << R"(,"needsVoices":true,"speed":)" << smartNumToStr(m_config.speed, m_config.decimalPlaces);
+    json += R"(],"bpm":)";
+    appendNum(json, finalBPM, dp);
+    json += R"(,"needsVoices":true,"speed":)";
+    appendNum(json, m_config.speed, dp);
 
-    json << R"(,"player1":")"  << m_config.p1Char
-         << R"(","player2":")" << m_config.p2Char
-         << R"(","gfVersion":")" << m_config.gfChar
-         << R"(","stage":")"   << m_config.stage << '"';
+    json += R"(,"player1":")";   json += m_config.p1Char;
+    json += R"(","player2":")";  json += m_config.p2Char;
+    json += R"(","gfVersion":")"; json += m_config.gfChar;
+    json += R"(","stage":")";    json += m_config.stage;
+    json += '"';
 
-    if (m_config.mania != 3)
-        json << R"(,"mania":)" << m_config.mania;
+    if (m_config.mania != 3) {
+        json += R"(,"mania":)";
+        appendInt(json, m_config.mania);
+    }
 
-    json << R"(,"validScore":true}})";
-
-    return json.str();
+    json += R"(,"validScore":true}})";
+    return json;
 }
 
 // ─── splitSections ────────────────────────────────────────────────────────────
 
-std::vector<std::vector<Section>>
+std::vector<std::pair<size_t, size_t>>
 PsychConverter::splitSections(const std::vector<Section>& sections, int notesPerChunk) const {
-    std::vector<std::vector<Section>> chunks;
-    std::vector<Section> current;
-    int count = 0;
+    std::vector<std::pair<size_t, size_t>> chunks;
+    size_t begin = 0;
+    int    count = 0;
 
-    for (const auto& sec : sections) {
-        int n = static_cast<int>(sec.notes.size());
-        if (count + n > notesPerChunk && !current.empty()) {
-            chunks.push_back(std::move(current));
-            current.clear();
+    for (size_t i = 0; i < sections.size(); ++i) {
+        int n = static_cast<int>(sections[i].notes.size());
+        if (count + n > notesPerChunk && i > begin) {
+            chunks.emplace_back(begin, i);
+            begin = i;
             count = 0;
         }
-        current.push_back(sec);
         count += n;
     }
-    if (!current.empty()) chunks.push_back(std::move(current));
+    if (begin < sections.size()) chunks.emplace_back(begin, sections.size());
     return chunks;
 }
 
@@ -167,35 +224,55 @@ PsychConverter::splitSections(const std::vector<Section>& sections, int notesPer
 // single tick (tickStart .. tickStart + 1 tick). The first note stays exactly
 // on the tick, the rest are spaced evenly inside it, so nothing ever drifts
 // into the next tick and the groove stays put.
+//
+// `notes` comes in sorted by (tick, lane). A spread note never leaves its own
+// tick, so the only thing that can get out of order is inside a single tick's
+// block - that's all we re-sort, instead of the whole chart.
 void PsychConverter::redistributeSimultaneousNotes(std::vector<ChartNote>& notes,
-                                                    double finalBPM, uint16_t ppq,
-                                                    const std::vector<TempoChange>& tempoChanges) const {
-    if (notes.size() < 2) return;
+                                                    const TempoMap& tempoMap) const {
+    const size_t n = notes.size();
+    if (n < 2) return;
 
-    size_t i = 0;
-    while (i < notes.size()) {
-        const int      lane = notes[i].lane;
-        const uint32_t tick = notes[i].tick;
+    auto timeOrder = [](const ChartNote& a, const ChartNote& b) {
+        if (a.time != b.time) return a.time < b.time;
+        if (a.lane != b.lane) return a.lane < b.lane;
+        return a.duration < b.duration;
+    };
 
-        size_t groupEnd = i + 1;
-        while (groupEnd < notes.size() &&
-               notes[groupEnd].lane == lane &&
-               notes[groupEnd].tick == tick) {
-            ++groupEnd;
+    size_t blockStart = 0;
+    while (blockStart < n) {
+        const uint32_t tick = notes[blockStart].tick;
+
+        size_t blockEnd = blockStart + 1;
+        while (blockEnd < n && notes[blockEnd].tick == tick) ++blockEnd;
+
+        if (blockEnd - blockStart > 1) {
+            bool   spread = false;
+            double tickMs = 0.0;   // how long one tick is right here (tempo-map aware), computed lazily
+
+            size_t i = blockStart;
+            while (i < blockEnd) {
+                const int lane = notes[i].lane;
+                size_t groupEnd = i + 1;
+                while (groupEnd < blockEnd && notes[groupEnd].lane == lane) ++groupEnd;
+
+                const size_t groupSize = groupEnd - i;
+                if (groupSize > 1) {
+                    if (!spread) tickMs = tempoMap.toMs(tick + 1) - tempoMap.toMs(tick);
+                    spread = true;
+
+                    const double base = notes[i].time;
+                    for (size_t j = 1; j < groupSize; ++j)
+                        notes[i + j].time = base + tickMs * static_cast<double>(j) / static_cast<double>(groupSize);
+                }
+                i = groupEnd;
+            }
+
+            if (spread)
+                std::sort(notes.begin() + blockStart, notes.begin() + blockEnd, timeOrder);
         }
 
-        const size_t groupSize = groupEnd - i;
-        if (groupSize > 1) {
-            // How long is one tick in ms right here? (tempo-map aware)
-            double tickMs = ticksToMs(tick + 1, finalBPM, ppq, tempoChanges, m_config.bpmMultiplier)
-                          - ticksToMs(tick,     finalBPM, ppq, tempoChanges, m_config.bpmMultiplier);
-
-            const double base = notes[i].time;
-            for (size_t j = 1; j < groupSize; ++j)
-                notes[i + j].time = base + tickMs * static_cast<double>(j) / static_cast<double>(groupSize);
-        }
-
-        i = groupEnd;
+        blockStart = blockEnd;
     }
 }
 
@@ -264,166 +341,142 @@ bool PsychConverter::convert(const std::string& p1File,
     double   baseBPM  = p1Parser.bpm;
     double   finalBPM = baseBPM * m_config.bpmMultiplier;
 
-    auto& tempoChanges = !p1Parser.tempoChanges.empty()
-                         ? p1Parser.tempoChanges : p2Parser.tempoChanges;
+    // Local copy, kept sorted by tick (tempo events found in several tracks can
+    // arrive out of order, and the tempo map needs them in order).
+    std::vector<TempoChange> tempoChanges = !p1Parser.tempoChanges.empty()
+                                            ? p1Parser.tempoChanges : p2Parser.tempoChanges;
+    auto byTick = [](const TempoChange& a, const TempoChange& b) { return a.tick < b.tick; };
+    if (!std::is_sorted(tempoChanges.begin(), tempoChanges.end(), byTick))
+        std::stable_sort(tempoChanges.begin(), tempoChanges.end(), byTick);
+
+    const TempoMap tempoMap(tempoChanges, finalBPM, ppq, m_config.bpmMultiplier);
 
     std::vector<std::pair<double, double>> timeToBPM;
-    for (const auto& tc : tempoChanges) {
-        double t = ticksToMs(tc.tick, baseBPM, ppq, tempoChanges, m_config.bpmMultiplier);
-        timeToBPM.push_back({t, tc.bpm * m_config.bpmMultiplier});
-    }
+    timeToBPM.reserve(tempoChanges.size());
+    for (const auto& tc : tempoChanges)
+        timeToBPM.push_back({tempoMap.toMs(tc.tick), tc.bpm * m_config.bpmMultiplier});
 
-    std::vector<ChartNote> allNotes;
-    allNotes.reserve(50000);
-    uint32_t maxTick = 0;
+    uint32_t maxTick  = 0;
+    const int keyCount = m_config.mania + 1;
 
-    int keyCount = m_config.mania + 1;
+    // Count how often each pitch shows up (and how many notes there are in total).
+    int    freq[256] = {};
+    size_t totalEvents = 0;
+    for (const MIDIParser* parser : {&p1Parser, &p2Parser})
+        for (const auto& track : parser->tracks)
+            for (const auto& evt : track) { ++freq[evt.note]; ++totalEvents; }
 
-    // Track pitch ranges for mapping and compute pitch frequencies
-    uint8_t minPitch = 127, maxPitch = 0;
-    std::unordered_map<uint8_t, int> freq;
-    for (const auto& track : p1Parser.tracks) {
-        for (const auto& evt : track) {
-            minPitch = std::min(minPitch, evt.note);
-            maxPitch = std::max(maxPitch, evt.note);
-            ++freq[evt.note];
-        }
-    }
-    for (const auto& track : p2Parser.tracks) {
-        for (const auto& evt : track) {
-            minPitch = std::min(minPitch, evt.note);
-            maxPitch = std::max(maxPitch, evt.note);
-            ++freq[evt.note];
-        }
-    }
+    // Pitch -> lane table (a flat array; no hashing per note).
+    int pitchToLane[256];
+    for (int p = 0; p < 256; ++p) pitchToLane[p] = p % keyCount;
 
-    // Build pitch -> lane mapping using histogram balancing (greedy)
-    std::unordered_map<uint8_t, int> pitchToLane;
-    if (m_config.smartPitchMapping && !freq.empty()) {
-        // Collect unique pitches into a vector and sort by descending frequency
-        std::vector<std::pair<uint8_t,int>> items;
-        items.reserve(freq.size());
-        for (const auto& kv : freq) items.emplace_back(kv.first, kv.second);
-        std::sort(items.begin(), items.end(), [](const auto& a, const auto& b){
+    if (m_config.smartPitchMapping && totalEvents > 0) {
+        // Histogram balancing: most-used pitches first, each one goes to the
+        // lane that currently has the fewest notes (lowest index on ties).
+        std::vector<std::pair<uint8_t, int>> items;
+        for (int p = 0; p < 256; ++p)
+            if (freq[p] > 0) items.emplace_back(static_cast<uint8_t>(p), freq[p]);
+        std::sort(items.begin(), items.end(), [](const auto& a, const auto& b) {
             return a.second > b.second || (a.second == b.second && a.first < b.first);
         });
 
-        // laneLoads holds current assigned note counts per lane
         std::vector<int> laneLoads(keyCount, 0);
-
-        for (const auto& p : items) {
-            // find lane with minimum load (first smallest index on ties)
+        for (const auto& it : items) {
             int bestLane = 0;
             int bestLoad = laneLoads[0];
             for (int l = 1; l < keyCount; ++l) {
                 if (laneLoads[l] < bestLoad) { bestLoad = laneLoads[l]; bestLane = l; }
             }
-            pitchToLane[p.first] = bestLane;
-            laneLoads[bestLane] += p.second;
+            pitchToLane[it.first] = bestLane;
+            laneLoads[bestLane] += it.second;
         }
     }
 
-    // P1 tracks → lanes 0 to (keyCount-1)
-    size_t totalP1 = p1Parser.tracks.size(), doneP1 = 0;
-    for (const auto& track : p1Parser.tracks) {
-        for (const auto& evt : track) {
-            double ms = ticksToMs(evt.tick, finalBPM, ppq, tempoChanges, m_config.bpmMultiplier)
-                        + m_config.noteOffset;
-            double dur = 0.0;
-            if (m_config.sustainNotes && evt.duration > 0) {
-                double s = ticksToMs(evt.tick,               finalBPM, ppq, tempoChanges, m_config.bpmMultiplier);
-                double e = ticksToMs(evt.tick + evt.duration, finalBPM, ppq, tempoChanges, m_config.bpmMultiplier);
-                dur = e - s;
+    std::vector<ChartNote> allNotes;
+    allNotes.reserve(totalEvents);   // one allocation instead of ~dozens of regrowths
+
+    // Where each MIDI track's notes start in allNotes (plus the end). Each track
+    // is already close to time-ordered, which the sort below takes advantage of.
+    std::vector<size_t> runStarts{0};
+
+    // Turns one player's parsed notes into ChartNotes. P1 gets lanes 0..keyCount-1,
+    // P2 gets lane+100 (the section builder maps them back later).
+    auto addPlayerNotes = [&](const MIDIParser& parser, int laneOffset,
+                              double progressBase, const char* tag) {
+        const size_t totalTracks = parser.tracks.size();
+        size_t doneTracks = 0;
+        for (const auto& track : parser.tracks) {
+            for (const auto& evt : track) {
+                const double startMs = tempoMap.toMs(evt.tick);
+                double dur = 0.0;
+                if (m_config.sustainNotes && evt.duration > 0)
+                    dur = tempoMap.toMs(evt.tick + evt.duration) - startMs;
+
+                allNotes.emplace_back(startMs + m_config.noteOffset,
+                                      pitchToLane[evt.note] + laneOffset, dur, evt.tick);
+                maxTick = std::max(maxTick, evt.tick);
             }
-            int lane = 0;
-            if (m_config.smartPitchMapping && !pitchToLane.empty()) {
-                auto it = pitchToLane.find(evt.note);
-                lane = (it != pitchToLane.end()) ? it->second : (evt.note % keyCount);
-            } else {
-                lane = evt.note % keyCount;
-            }
-            allNotes.emplace_back(ms, lane, dur, evt.tick);
-            maxTick = std::max(maxTick, evt.tick);
+            runStarts.push_back(allNotes.size());
+            ++doneTracks;
+            if (totalTracks > 0)
+                convertBar.update(progressBase + static_cast<double>(doneTracks) / totalTracks * 0.25,
+                    std::string(tag) + " tracks " + std::to_string(doneTracks) + "/" + std::to_string(totalTracks));
         }
-        ++doneP1;
-        if (totalP1 > 0)
-            convertBar.update(static_cast<double>(doneP1) / totalP1 * 0.25,
-                "P1 tracks " + std::to_string(doneP1) + "/" + std::to_string(totalP1));
-    }
+    };
+
+    addPlayerNotes(p1Parser, 0, 0.0, "P1");
 
     convertBar.update(0.25, "Processing P2...");
     size_t p1Count = allNotes.size();
 
-    // P2 tracks → lanes (keyCount) to (2*keyCount-1)
-    size_t totalP2 = p2Parser.tracks.size(), doneP2 = 0;
-    for (const auto& track : p2Parser.tracks) {
-        for (const auto& evt : track) {
-            double ms = ticksToMs(evt.tick, finalBPM, ppq, tempoChanges, m_config.bpmMultiplier)
-                        + m_config.noteOffset;
-            double dur = 0.0;
-            if (m_config.sustainNotes && evt.duration > 0) {
-                double s = ticksToMs(evt.tick,               finalBPM, ppq, tempoChanges, m_config.bpmMultiplier);
-                double e = ticksToMs(evt.tick + evt.duration, finalBPM, ppq, tempoChanges, m_config.bpmMultiplier);
-                dur = e - s;
-            }
-            int lane = 0;
-            if (m_config.smartPitchMapping && !pitchToLane.empty()) {
-                auto it = pitchToLane.find(evt.note);
-                lane = ((it != pitchToLane.end()) ? it->second : (evt.note % keyCount)) + 100;
-            } else {
-                lane = (evt.note % keyCount) + 100;
-            }
-            allNotes.emplace_back(ms, lane, dur, evt.tick);
-            maxTick = std::max(maxTick, evt.tick);
-        }
-        ++doneP2;
-        if (totalP2 > 0)
-            convertBar.update(0.25 + static_cast<double>(doneP2) / totalP2 * 0.25,
-                "P2 tracks " + std::to_string(doneP2) + "/" + std::to_string(totalP2));
-    }
+    addPlayerNotes(p2Parser, 100, 0.25, "P2");
 
     convertBar.update(0.50, "Sorting notes...");
 
-    if (allNotes.size() > 10000) {
-        guiLogger.logColored("Using parallel sort for large dataset...\n", YELLOW);
-        std::sort(std::execution::par_unseq, allNotes.begin(), allNotes.end(),
-            [](const ChartNote& a, const ChartNote& b) {
-                return a.time < b.time || (a.time == b.time && a.lane < b.lane);
-            });
-    } else {
-        std::sort(allNotes.begin(), allNotes.end(),
-            [](const ChartNote& a, const ChartNote& b) {
-                return a.time < b.time || (a.time == b.time && a.lane < b.lane);
-            });
-    }
+    // Order by (tick, lane, length). Time only ever goes up with the tick, so this
+    // is time order too - but integer compares, and ties come out the same way
+    // every run (the old sort left them up to the algorithm).
+    auto tickLess = [](const ChartNote& a, const ChartNote& b) {
+        if (a.tick != b.tick) return a.tick < b.tick;
+        if (a.lane != b.lane) return a.lane < b.lane;
+        return a.duration < b.duration;
+    };
+    sortRuns(allNotes, std::move(runStarts), tickLess);
 
     convertBar.update(0.60, "Spreading same-tick notes...");
 
-    // Same lane + same tick -> spread inside that tick's span.
-    redistributeSimultaneousNotes(allNotes, finalBPM, ppq, tempoChanges);
-
-    // The shuffle can nudge a note a hair past a neighbour on another lane,
-    // so put everything back in time order before building sections.
-    std::sort(allNotes.begin(), allNotes.end(),
-        [](const ChartNote& a, const ChartNote& b) {
-            return a.time < b.time || (a.time == b.time && a.lane < b.lane);
-        });
+    // Same lane + same tick -> spread inside that tick's span (and put each
+    // tick's little block back in time order).
+    redistributeSimultaneousNotes(allNotes, tempoMap);
 
     convertBar.update(0.75, "Building sections...");
 
     // ── Section building (two-pointer O(n)) ──────────────────────────────
     std::vector<Section> sections;
-    double maxTime     = ticksToMs(maxTick, finalBPM, ppq, tempoChanges, m_config.bpmMultiplier);
+    double maxTime     = tempoMap.toMs(maxTick);
     double currentTime = 0.0;
     double currentBPM  = finalBPM;
 
     int    totalSectionEst = static_cast<int>((maxTime / ((60000.0 / finalBPM) * 4)) + 1);
     int    sectionCount    = 0;
+    int    lastPct         = -1;
     size_t noteIdx         = 0;
     bool   lastMustHit     = true;
 
+    sections.reserve(static_cast<size_t>(std::max(0, totalSectionEst)) + 2);
+
+    // timeToBPM is sorted by time and the song only moves forward, so two
+    // cursors replace the old "scan the whole list" lookups for every section.
+    const size_t nChanges = timeToBPM.size();
+    long   bpmCursor   = -1;   // last tempo change at or before currentTime
+    size_t nextChange  = 0;    // first tempo change after currentTime
+
     while (currentTime < maxTime + (60000.0 / currentBPM) * 4) {
-        currentBPM = getBPMAtTime(currentTime, timeToBPM, finalBPM);
+        while (bpmCursor + 1 < static_cast<long>(nChanges) &&
+               timeToBPM[bpmCursor + 1].first <= currentTime)
+            ++bpmCursor;
+        currentBPM = (bpmCursor >= 0) ? timeToBPM[bpmCursor].second : finalBPM;
+
         double sectionLen = (60000.0 / currentBPM) * 4;
         double sectionEnd = currentTime + sectionLen;
 
@@ -431,12 +484,12 @@ bool PsychConverter::convert(const std::string& p1File,
         section.bpm       = currentBPM;
         section.changeBPM = false;
 
-        double lastBPMInSection = currentBPM;
-        bool   foundChange      = false;
-        for (const auto& [t, b] : timeToBPM) {
-            if (t > currentTime && t < sectionEnd) { foundChange = true; lastBPMInSection = b; }
+        while (nextChange < nChanges && timeToBPM[nextChange].first <= currentTime)
+            ++nextChange;
+        for (size_t j = nextChange; j < nChanges && timeToBPM[j].first < sectionEnd; ++j) {
+            section.changeBPM = true;
+            section.bpm       = timeToBPM[j].second;   // the last change inside the section wins
         }
-        if (foundChange) { section.changeBPM = true; section.bpm = lastBPMInSection; }
 
         while (noteIdx < allNotes.size() && allNotes[noteIdx].time < currentTime)
             ++noteIdx;
@@ -456,6 +509,7 @@ bool PsychConverter::convert(const std::string& p1File,
             section.mustHitSection = (p1Count2 >= p2Count2);
         lastMustHit = section.mustHitSection;
 
+        section.notes.reserve(sectionEnd2 - sectionStart);
         for (size_t i = sectionStart; i < sectionEnd2; ++i) {
             const auto& note = allNotes[i];
             bool isP1        = (note.lane < 100);
@@ -470,8 +524,13 @@ bool PsychConverter::convert(const std::string& p1File,
         sections.push_back(std::move(section));
         currentTime += sectionLen;
 
-        if (++sectionCount % 10 == 0) {
-            double prog = std::min(0.99, currentTime / maxTime);
+        // Only touch the log/progress bar when the percentage actually moves.
+        // (Each update is a cross-thread SendMessage into the GUI.)
+        ++sectionCount;
+        double prog = std::min(0.99, currentTime / maxTime);
+        int    pct  = static_cast<int>(prog * 100);
+        if (pct != lastPct) {
+            lastPct = pct;
             convertBar.update(0.75 + prog * 0.24,
                 "Section " + std::to_string(sectionCount) + "/" + std::to_string(totalSectionEst));
         }
@@ -497,14 +556,15 @@ bool PsychConverter::convert(const std::string& p1File,
 
         for (size_t i = 0; i < chunks.size(); ++i) {
             std::string fname = baseName + "-" + std::to_string(i + 1) + extension;
-            std::string json  = buildJSON(chunks[i], finalBPM);
+            std::string json  = buildJSON(sections.data() + chunks[i].first,
+                                          sections.data() + chunks[i].second, finalBPM);
 
             std::ofstream out(fname);
             if (!out) {
                 guiLogger.logColored("\n[X] Failed to write file: " + fname + "\n", RED);
                 return false;
             }
-            out << json;
+            out.write(json.data(), static_cast<std::streamsize>(json.size()));
             outputFiles.push_back(fname);
             totalFileSize += json.size();
 
@@ -513,14 +573,14 @@ bool PsychConverter::convert(const std::string& p1File,
         }
     } else {
         guiLogger.logColored("Generating single JSON file...\n", CYAN);
-        std::string json = buildJSON(sections, finalBPM);
+        std::string json = buildJSON(sections.data(), sections.data() + sections.size(), finalBPM);
 
         std::ofstream out(outFile);
         if (!out) {
             guiLogger.logColored("\n[X] Failed to write output file!\n", RED);
             return false;
         }
-        out << json;
+        out.write(json.data(), static_cast<std::streamsize>(json.size()));
         outputFiles.push_back(outFile);
         totalFileSize = json.size();
     }
@@ -548,7 +608,7 @@ bool PsychConverter::convert(const std::string& p1File,
     if (tempoChanges.size() > 1) {
         guiLogger.log("BPM Changes (" + std::to_string(tempoChanges.size() - 1) + "):\n");
         for (size_t i = 1; i < std::min(size_t(6), tempoChanges.size()); ++i) {
-            double t = ticksToMs(tempoChanges[i].tick, baseBPM, ppq, tempoChanges, m_config.bpmMultiplier);
+            double t = tempoMap.toMs(tempoChanges[i].tick);
             std::ostringstream cs;
             cs << std::fixed << std::setprecision(2);
             cs << "  @ " << std::setw(7) << (t / 1000.0)
