@@ -1,7 +1,9 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 #ifdef _WIN32
@@ -12,14 +14,16 @@
 
 // ─── Chart data structures ────────────────────────────────────────────────────
 
+// Field order is deliberate: 8+8+4+4 = 24 bytes with no padding (was 32), which
+// matters when you're shuffling millions of these around in a sort.
 struct ChartNote {
     double   time;
-    int      lane;
     double   duration;
+    int      lane;
     uint32_t tick;      // source MIDI tick (used to spot notes sharing a tick)
 
     ChartNote(double t, int l, double d = 0.0, uint32_t tk = 0)
-        : time(t), lane(l), duration(d), tick(tk) {}
+        : time(t), duration(d), lane(l), tick(tk) {}
 };
 
 struct Section {
@@ -27,6 +31,61 @@ struct Section {
     bool   mustHitSection = true;
     bool   changeBPM      = false;
     double bpm            = 120.0;
+};
+
+// ─── Tempo map ────────────────────────────────────────────────────────────────
+
+// Tick -> milliseconds in O(log T). Segment start times are precomputed once,
+// so a lookup is a binary search plus one multiply instead of walking every
+// tempo change from the start of the song. The maths is arranged exactly like
+// the old per-call loop, so the results are bit-for-bit the same.
+// `changes` must be sorted by tick.
+class TempoMap {
+public:
+    TempoMap(const std::vector<TempoChange>& changes, double finalBPM,
+             uint16_t ppq, double multiplier)
+        : m_ppq(static_cast<double>(ppq)),
+          m_emptyMsPerBeat(60000.0 / finalBPM) {
+        const size_t n = changes.size();
+        m_tick.reserve(n);
+        m_msPerBeat.reserve(n);
+        m_cumMs.reserve(n);
+
+        double ms = 0.0;
+        for (size_t i = 0; i < n; ++i) {
+            m_tick.push_back(changes[i].tick);
+            m_msPerBeat.push_back(60000.0 / (changes[i].bpm * multiplier));
+
+            // Time at tempo change i = time at change i-1 + the segment between
+            // them, played at the tempo that was active before change i.
+            const uint32_t prevTick   = (i == 0) ? 0 : changes[i - 1].tick;
+            const double   prevPerBeat = (i == 0) ? m_msPerBeat[0] : m_msPerBeat[i - 1];
+            ms += ((changes[i].tick - prevTick) * prevPerBeat) / m_ppq;
+            m_cumMs.push_back(ms);
+        }
+    }
+
+    double toMs(uint32_t ticks) const {
+        if (m_tick.empty())
+            return (ticks * m_emptyMsPerBeat) / m_ppq;
+
+        // k = first change at or after `ticks`
+        const size_t k = static_cast<size_t>(
+            std::lower_bound(m_tick.begin(), m_tick.end(), ticks) - m_tick.begin());
+
+        if (k == 0)   // before (or exactly on) the first change
+            return (ticks * m_msPerBeat[0]) / m_ppq;
+
+        const size_t j = k - 1;   // last change strictly before `ticks`
+        return m_cumMs[j] + ((ticks - m_tick[j]) * m_msPerBeat[j]) / m_ppq;
+    }
+
+private:
+    double m_ppq;
+    double m_emptyMsPerBeat;
+    std::vector<uint32_t> m_tick;
+    std::vector<double>   m_msPerBeat;   // 60000 / (bpm * multiplier)
+    std::vector<double>   m_cumMs;       // song time at each change's tick
 };
 
 // ─── Converter ────────────────────────────────────────────────────────────────
@@ -74,28 +133,19 @@ private:
         m_config.mania = std::max(0, std::min(m_config.mania, 69420));
     }
 
-    // Tick → milliseconds, accounting for all tempo changes.
-    double ticksToMs(uint32_t ticks, double finalBPM, uint16_t ppq,
-                     const std::vector<TempoChange>& tempoChanges,
-                     double multiplier) const;
-
-    // Return the BPM active at a given millisecond timestamp.
-    double getBPMAtTime(double time,
-                        const std::vector<std::pair<double, double>>& timeToBPM,
-                        double baseBPM) const;
-
-    // Serialise sections to a Psych-Engine JSON string.
-    std::string buildJSON(const std::vector<Section>& sections, double finalBPM) const;
+    // Serialise a run of sections [first, last) to a Psych-Engine JSON string.
+    std::string buildJSON(const Section* first, const Section* last, double finalBPM) const;
 
     // Divide sections into chunks capped at notesPerChunk total notes.
-    std::vector<std::vector<Section>> splitSections(const std::vector<Section>& sections,
-                                                     int notesPerChunk) const;
+    // Returns [begin, end) section index ranges, so nothing gets copied.
+    std::vector<std::pair<size_t, size_t>> splitSections(const std::vector<Section>& sections,
+                                                         int notesPerChunk) const;
 
     // Notes that share a lane AND a MIDI tick get spread evenly across the
     // length of that one tick, so they aren't stacked at the exact same time.
+    // Expects `notes` sorted by (tick, lane); leaves them in time order.
     void redistributeSimultaneousNotes(std::vector<ChartNote>& notes,
-                                       double finalBPM, uint16_t ppq,
-                                       const std::vector<TempoChange>& tempoChanges) const;
+                                       const TempoMap& tempoMap) const;
 
     // Intelligent pitch-to-lane mapping to avoid pitch collisions
     int smartPitchToLane(uint8_t midiNote, int keyCount, uint8_t minPitch, uint8_t maxPitch) const;
