@@ -161,61 +161,38 @@ PsychConverter::splitSections(const std::vector<Section>& sections, int notesPer
     return chunks;
 }
 
-// ─── fixMustHitSectionAcrossChunks ────────────────────────────────────────────
-
 // ─── redistributeSimultaneousNotes ────────────────────────────────────────────
 
+// Notes on the same lane + same MIDI tick get spread across the span of that
+// single tick (tickStart .. tickStart + 1 tick). The first note stays exactly
+// on the tick, the rest are spaced evenly inside it, so nothing ever drifts
+// into the next tick and the groove stays put.
 void PsychConverter::redistributeSimultaneousNotes(std::vector<ChartNote>& notes,
-                                                    double sectionLengthMs) const {
+                                                    double finalBPM, uint16_t ppq,
+                                                    const std::vector<TempoChange>& tempoChanges) const {
     if (notes.size() < 2) return;
-
-    const double EPSILON = 0.001;  // 1ms threshold for "simultaneous"
 
     size_t i = 0;
     while (i < notes.size()) {
-        int    currentLane = notes[i].lane;
-        double currentTime = notes[i].time;
+        const int      lane = notes[i].lane;
+        const uint32_t tick = notes[i].tick;
 
-        // Collect all notes with the same lane at approximately the same time
-        size_t groupStart = i;
-        size_t groupEnd   = i + 1;
+        size_t groupEnd = i + 1;
         while (groupEnd < notes.size() &&
-               notes[groupEnd].lane == currentLane &&
-               std::abs(notes[groupEnd].time - currentTime) < EPSILON) {
+               notes[groupEnd].lane == lane &&
+               notes[groupEnd].tick == tick) {
             ++groupEnd;
         }
 
-        // Only bother if there are actually multiple simultaneous notes
-        if (groupEnd - groupStart > 1) {
-            // Find the next note on the same lane
-            size_t nextSameIdx = groupEnd;
-            while (nextSameIdx < notes.size() && notes[nextSameIdx].lane != currentLane)
-                ++nextSameIdx;
+        const size_t groupSize = groupEnd - i;
+        if (groupSize > 1) {
+            // How long is one tick in ms right here? (tempo-map aware)
+            double tickMs = ticksToMs(tick + 1, finalBPM, ppq, tempoChanges, m_config.bpmMultiplier)
+                          - ticksToMs(tick,     finalBPM, ppq, tempoChanges, m_config.bpmMultiplier);
 
-            bool shouldRedistribute = false;
-            if (nextSameIdx < notes.size()) {
-                double nextTime = notes[nextSameIdx].time;
-                double gap      = nextTime - currentTime;
-
-                // Work out which section currentTime sits in, and whether
-                // nextTime is in the same section.  A section starts at
-                // floor(currentTime / sectionLengthMs) * sectionLengthMs.
-                double currentSection = std::floor(currentTime / sectionLengthMs);
-                double nextSection    = std::floor(nextTime    / sectionLengthMs);
-
-                // Only redistribute if the target note is in the SAME section
-                shouldRedistribute = (currentSection == nextSection);
-
-                if (shouldRedistribute) {
-                    size_t groupSize = groupEnd - groupStart;
-                    double timeStep  = gap / static_cast<double>(groupSize + 1);
-
-                    for (size_t j = groupStart; j < groupEnd; ++j)
-                        notes[j].time = currentTime + timeStep * static_cast<double>(j - groupStart + 1);
-                }
-                // If cross-section: leave all notes at currentTime as-is
-            }
-            // If no next same-lane note exists at all: also leave as-is
+            const double base = notes[i].time;
+            for (size_t j = 1; j < groupSize; ++j)
+                notes[i + j].time = base + tickMs * static_cast<double>(j) / static_cast<double>(groupSize);
         }
 
         i = groupEnd;
@@ -365,7 +342,7 @@ bool PsychConverter::convert(const std::string& p1File,
             } else {
                 lane = evt.note % keyCount;
             }
-            allNotes.emplace_back(ms, lane, dur);
+            allNotes.emplace_back(ms, lane, dur, evt.tick);
             maxTick = std::max(maxTick, evt.tick);
         }
         ++doneP1;
@@ -396,7 +373,7 @@ bool PsychConverter::convert(const std::string& p1File,
             } else {
                 lane = (evt.note % keyCount) + 100;
             }
-            allNotes.emplace_back(ms, lane, dur);
+            allNotes.emplace_back(ms, lane, dur, evt.tick);
             maxTick = std::max(maxTick, evt.tick);
         }
         ++doneP2;
@@ -420,12 +397,17 @@ bool PsychConverter::convert(const std::string& p1File,
             });
     }
 
-    convertBar.update(0.60, "Redistributing simultaneous notes...");
+    convertBar.update(0.60, "Spreading same-tick notes...");
 
-    // Section length in ms at the current BPM (4 beats per section).
-    // Used by redistributeSimultaneousNotes to detect cross-section gaps.
-    double sectionLengthMs = (60000.0 / finalBPM) * 4.0;
-    redistributeSimultaneousNotes(allNotes, sectionLengthMs);
+    // Same lane + same tick -> spread inside that tick's span.
+    redistributeSimultaneousNotes(allNotes, finalBPM, ppq, tempoChanges);
+
+    // The shuffle can nudge a note a hair past a neighbour on another lane,
+    // so put everything back in time order before building sections.
+    std::sort(allNotes.begin(), allNotes.end(),
+        [](const ChartNote& a, const ChartNote& b) {
+            return a.time < b.time || (a.time == b.time && a.lane < b.lane);
+        });
 
     convertBar.update(0.75, "Building sections...");
 

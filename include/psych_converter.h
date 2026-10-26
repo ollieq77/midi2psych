@@ -13,11 +13,13 @@
 // ─── Chart data structures ────────────────────────────────────────────────────
 
 struct ChartNote {
-    double time;
-    int    lane;
-    double duration;
+    double   time;
+    int      lane;
+    double   duration;
+    uint32_t tick;      // source MIDI tick (used to spot notes sharing a tick)
 
-    ChartNote(double t, int l, double d = 0.0) : time(t), lane(l), duration(d) {}
+    ChartNote(double t, int l, double d = 0.0, uint32_t tk = 0)
+        : time(t), lane(l), duration(d), tick(tk) {}
 };
 
 struct Section {
@@ -89,9 +91,11 @@ private:
     std::vector<std::vector<Section>> splitSections(const std::vector<Section>& sections,
                                                      int notesPerChunk) const;
 
-    // Redistribute simultaneous same-lane notes evenly across the gap until
-    // the next note with the same lane.
-    void redistributeSimultaneousNotes(std::vector<ChartNote>& notes, double sectionLengthMs) const;
+    // Notes that share a lane AND a MIDI tick get spread evenly across the
+    // length of that one tick, so they aren't stacked at the exact same time.
+    void redistributeSimultaneousNotes(std::vector<ChartNote>& notes,
+                                       double finalBPM, uint16_t ppq,
+                                       const std::vector<TempoChange>& tempoChanges) const;
 
     // Intelligent pitch-to-lane mapping to avoid pitch collisions
     int smartPitchToLane(uint8_t midiNote, int keyCount, uint8_t minPitch, uint8_t maxPitch) const;
