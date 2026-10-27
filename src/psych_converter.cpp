@@ -111,17 +111,26 @@ void sortRuns(std::vector<ChartNote>& v, std::vector<size_t> starts, Cmp cmp) {
 
 }  // namespace
 
-// ─── buildJSON ────────────────────────────────────────────────────────────────
+// ─── writeJSON ────────────────────────────────────────────────────────────────
 
-std::string PsychConverter::buildJSON(const Section* first, const Section* last,
-                                       double finalBPM) const {
+size_t PsychConverter::writeJSON(std::ostream& out, const ChartNote* notes,
+                                  const Section* first, const Section* last,
+                                  double finalBPM) const {
+    // Flush to the stream whenever the buffer passes this (a few notes' worth of
+    // slack on top is fine). Keeps memory flat no matter how big the chart is -
+    // the old all-in-one string was ~25 bytes per note, ~1.7 GB for 67M notes.
+    constexpr size_t kFlushAt = size_t(1) << 20;
+
     const int dp = m_config.decimalPlaces;
 
-    size_t totalNotes = 0;
-    for (const Section* s = first; s != last; ++s) totalNotes += s->notes.size();
-
     std::string json;
-    json.reserve(totalNotes * 32 + static_cast<size_t>(last - first) * 96 + 512);
+    json.reserve(kFlushAt + 4096);
+    size_t written = 0;
+    auto flush = [&]() {
+        out.write(json.data(), static_cast<std::streamsize>(json.size()));
+        written += json.size();
+        json.clear();
+    };
 
     json += R"({"song":{"song":")";
     json += m_config.songName;
@@ -139,7 +148,8 @@ std::string PsychConverter::buildJSON(const Section* first, const Section* last,
         json += R"({"sectionNotes":[)";
 
         bool firstNote = true;
-        for (const ChartNote& n : s->notes) {
+        for (size_t i = s->firstNote; i < s->lastNote; ++i) {
+            const ChartNote& n = notes[i];
             if (!firstNote) json += ',';
             firstNote = false;
 
@@ -166,6 +176,8 @@ std::string PsychConverter::buildJSON(const Section* first, const Section* last,
             } else {
                 json += "0,0]";
             }
+
+            if (json.size() >= kFlushAt) flush();
         }
 
         json += R"(],"lengthInSteps":16,"mustHitSection":)";
@@ -182,10 +194,10 @@ std::string PsychConverter::buildJSON(const Section* first, const Section* last,
     json += R"(,"needsVoices":true,"speed":)";
     appendNum(json, m_config.speed, dp);
 
-    json += R"(,"player1":")";   json += m_config.p1Char;
-    json += R"(","player2":")";  json += m_config.p2Char;
+    json += R"(,"player1":")";    json += m_config.p1Char;
+    json += R"(","player2":")";   json += m_config.p2Char;
     json += R"(","gfVersion":")"; json += m_config.gfChar;
-    json += R"(","stage":")";    json += m_config.stage;
+    json += R"(","stage":")";     json += m_config.stage;
     json += '"';
 
     if (m_config.mania != 3) {
@@ -194,7 +206,8 @@ std::string PsychConverter::buildJSON(const Section* first, const Section* last,
     }
 
     json += R"(,"validScore":true}})";
-    return json;
+    flush();
+    return written;
 }
 
 // ─── splitSections ────────────────────────────────────────────────────────────
@@ -206,7 +219,7 @@ PsychConverter::splitSections(const std::vector<Section>& sections, int notesPer
     int    count = 0;
 
     for (size_t i = 0; i < sections.size(); ++i) {
-        int n = static_cast<int>(sections[i].notes.size());
+        int n = static_cast<int>(sections[i].noteCount());
         if (count + n > notesPerChunk && i > begin) {
             chunks.emplace_back(begin, i);
             begin = i;
@@ -514,16 +527,18 @@ bool PsychConverter::convert(const std::string& p1File,
             section.mustHitSection = (p1Count2 >= p2Count2);
         lastMustHit = section.mustHitSection;
 
-        section.notes.reserve(sectionEnd2 - sectionStart);
+        // Move each note to its final lane right where it sits; the section only
+        // records which slice of allNotes it covers (no per-section copy).
         for (size_t i = sectionStart; i < sectionEnd2; ++i) {
-            const auto& note = allNotes[i];
-            bool isP1        = (note.lane < 100);
-            int  baseLane    = isP1 ? note.lane : (note.lane - 100);
-            int  finalLane   = section.mustHitSection
-                               ? (isP1 ? baseLane : baseLane + keyCount)
-                               : (isP1 ? baseLane + keyCount : baseLane);
-            section.notes.emplace_back(note.time, finalLane, note.duration);
+            ChartNote& note = allNotes[i];
+            bool isP1       = (note.lane < 100);
+            int  baseLane   = isP1 ? note.lane : (note.lane - 100);
+            note.lane       = section.mustHitSection
+                              ? (isP1 ? baseLane : baseLane + keyCount)
+                              : (isP1 ? baseLane + keyCount : baseLane);
         }
+        section.firstNote = sectionStart;
+        section.lastNote  = sectionEnd2;
 
         noteIdx = sectionEnd2;
         sections.push_back(std::move(section));
@@ -541,7 +556,7 @@ bool PsychConverter::convert(const std::string& p1File,
         }
     }
 
-    while (!sections.empty() && sections.back().notes.empty())
+    while (!sections.empty() && sections.back().noteCount() == 0)
         sections.pop_back();
 
     convertBar.finish("Sections built!");
@@ -549,6 +564,23 @@ bool PsychConverter::convert(const std::string& p1File,
     // ── File output ───────────────────────────────────────────────────────
     std::vector<std::string> outputFiles;
     size_t totalFileSize = 0;
+
+    // Writes sections [first, last) to `path`; false (after logging why) if it fails.
+    auto writeChart = [&](const std::string& path, const Section* first, const Section* last,
+                          size_t& bytesOut) -> bool {
+        std::ofstream out(path, std::ios::binary);
+        if (!out) {
+            guiLogger.logColored("\n[X] Failed to write file: " + path + "\n", RED);
+            return false;
+        }
+        bytesOut = writeJSON(out, allNotes.data(), first, last, finalBPM);
+        out.flush();
+        if (!out) {
+            guiLogger.logColored("\n[X] Error while writing " + path + " (disk full?)\n", RED);
+            return false;
+        }
+        return true;
+    };
 
     if (m_config.splitOutput && m_config.notesPerSplit > 0) {
         guiLogger.logColored("Splitting chart into multiple files...\n", CYAN);
@@ -561,33 +593,23 @@ bool PsychConverter::convert(const std::string& p1File,
 
         for (size_t i = 0; i < chunks.size(); ++i) {
             std::string fname = baseName + "-" + std::to_string(i + 1) + extension;
-            std::string json  = buildJSON(sections.data() + chunks[i].first,
-                                          sections.data() + chunks[i].second, finalBPM);
-
-            std::ofstream out(fname);
-            if (!out) {
-                guiLogger.logColored("\n[X] Failed to write file: " + fname + "\n", RED);
+            size_t bytes = 0;
+            if (!writeChart(fname, sections.data() + chunks[i].first,
+                                   sections.data() + chunks[i].second, bytes))
                 return false;
-            }
-            out.write(json.data(), static_cast<std::streamsize>(json.size()));
             outputFiles.push_back(fname);
-            totalFileSize += json.size();
+            totalFileSize += bytes;
 
             guiLogger.log("  Created: " + fname + " (" +
-                          std::to_string(json.size() / 1024.0) + " KB)\n");
+                          std::to_string(bytes / 1024.0) + " KB)\n");
         }
     } else {
         guiLogger.logColored("Generating single JSON file...\n", CYAN);
-        std::string json = buildJSON(sections.data(), sections.data() + sections.size(), finalBPM);
-
-        std::ofstream out(outFile);
-        if (!out) {
-            guiLogger.logColored("\n[X] Failed to write output file!\n", RED);
+        size_t bytes = 0;
+        if (!writeChart(outFile, sections.data(), sections.data() + sections.size(), bytes))
             return false;
-        }
-        out.write(json.data(), static_cast<std::streamsize>(json.size()));
         outputFiles.push_back(outFile);
-        totalFileSize = json.size();
+        totalFileSize = bytes;
     }
 
     // ── Stats ─────────────────────────────────────────────────────────────

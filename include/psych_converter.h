@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <ostream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -26,11 +27,17 @@ struct ChartNote {
         : time(t), duration(d), lane(l), tick(tk) {}
 };
 
+// A section doesn't own its notes: it just remembers which slice of the chart's
+// (time-sorted) note array it covers. Copying every note into its section used to
+// cost as much memory again as the note array itself.
 struct Section {
-    std::vector<ChartNote> notes;
+    size_t firstNote      = 0;      // notes [firstNote, lastNote) belong to this section
+    size_t lastNote       = 0;
     bool   mustHitSection = true;
     bool   changeBPM      = false;
     double bpm            = 120.0;
+
+    size_t noteCount() const { return lastNote - firstNote; }
 };
 
 // ─── Tempo map ────────────────────────────────────────────────────────────────
@@ -133,8 +140,11 @@ private:
         m_config.mania = std::max(0, std::min(m_config.mania, 69420));
     }
 
-    // Serialise a run of sections [first, last) to a Psych-Engine JSON string.
-    std::string buildJSON(const Section* first, const Section* last, double finalBPM) const;
+    // Stream the sections [first, last) as Psych-Engine JSON into `out`, using a small
+    // reusable buffer (the whole file is never held in memory as one string).
+    // `notes` is the chart's note array the sections point into. Returns bytes written.
+    size_t writeJSON(std::ostream& out, const ChartNote* notes,
+                     const Section* first, const Section* last, double finalBPM) const;
 
     // Divide sections into chunks capped at notesPerChunk total notes.
     // Returns [begin, end) section index ranges, so nothing gets copied.
