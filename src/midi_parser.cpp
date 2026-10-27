@@ -1,5 +1,6 @@
 #include "midi_parser.h"
 
+#include <algorithm>
 #include <array>
 #include <fstream>
 #include <vector>
@@ -65,8 +66,13 @@ bool MIDIParser::parse(const std::string& filename, bool sustainNotes, int minVe
         uint32_t trackLen = read32();
         size_t   trackEnd = m_pos + trackLen;
 
+        // A stored event needs at least ~6 bytes of file (note-on + note-off, even with
+        // running status), so trackLen/6 is a tight starting size. Reserving it up front
+        // avoids vector doubling (up to 2x slack, plus a full copy at every regrow).
+        // Clamped to what's actually left in the file so a corrupt length can't make
+        // us reserve gigabytes.
         std::vector<MIDINote> events;
-        events.reserve(10000);
+        events.reserve(std::min<size_t>(trackLen, m_data.size() - m_pos) / 6 + 16);
 
         uint32_t time          = 0;
         uint8_t  runningStatus = 0;
@@ -136,6 +142,11 @@ bool MIDIParser::parse(const std::string& filename, bool sustainNotes, int minVe
         if (!events.empty())
             tracks.push_back(std::move(events));
     }
+
+    // The raw file bytes are no longer needed (everything lives in `tracks` now).
+    // Without this, the parser kept a full copy of each .mid for its whole lifetime.
+    std::vector<uint8_t>().swap(m_data);
+    m_pos = 0;
 
     return true;
 }
