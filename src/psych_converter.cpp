@@ -401,11 +401,15 @@ bool PsychConverter::convert(const std::string& p1File,
 
     // Turns one player's parsed notes into ChartNotes. P1 gets lanes 0..keyCount-1,
     // P2 gets lane+100 (the section builder maps them back later).
-    auto addPlayerNotes = [&](const MIDIParser& parser, int laneOffset,
+    //
+    // Each track's parsed events are released the moment they've been converted, so
+    // the 12-byte MIDINotes drain away while the 24-byte ChartNotes fill up instead
+    // of both sets sitting in memory at the same time.
+    auto addPlayerNotes = [&](MIDIParser& parser, int laneOffset,
                               double progressBase, const char* tag) {
         const size_t totalTracks = parser.tracks.size();
         size_t doneTracks = 0;
-        for (const auto& track : parser.tracks) {
+        for (auto& track : parser.tracks) {
             for (const auto& evt : track) {
                 const double startMs = tempoMap.toMs(evt.tick);
                 double dur = 0.0;
@@ -417,6 +421,7 @@ bool PsychConverter::convert(const std::string& p1File,
                 maxTick = std::max(maxTick, evt.tick);
             }
             runStarts.push_back(allNotes.size());
+            std::vector<MIDINote>().swap(track);   // give this track's events back
             ++doneTracks;
             if (totalTracks > 0)
                 convertBar.update(progressBase + static_cast<double>(doneTracks) / totalTracks * 0.25,
