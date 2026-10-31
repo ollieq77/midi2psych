@@ -9,6 +9,7 @@
 #include <fstream>
 #include <future>
 #include <iomanip>
+#include <memory>
 #include <sstream>
 #include <thread>
 
@@ -22,27 +23,49 @@
 
 namespace {
 
-// Writes exactly what smartNumToStr() would (including its habit of leaving
-// "2.000000" alone), but without building an ostringstream for every number.
-// Writing 3-4 million of those was a big chunk of the old runtime.
-void appendNum(std::string& out, double num, int maxDecimals) {
+const double   kPow10[]  = {1e0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8, 1e9};
+const uint64_t kPow10i[] = {1ull, 10ull, 100ull, 1000ull, 10000ull, 100000ull, 1000000ull,
+                            10000000ull, 100000000ull, 1000000000ull};
+
+// Writes the decimal digits of v at p; returns the new write pointer.
+inline char* writeU64(char* p, uint64_t v) {
+    char tmp[20];
+    int  n = 0;
+    do { tmp[n++] = static_cast<char>('0' + v % 10); v /= 10; } while (v);
+    while (n) *p++ = tmp[--n];
+    return p;
+}
+
+// Exact path: produces precisely what smartNumToStr() would (including its habit of
+// leaving "2.000000" alone), via to_chars/snprintf. Used for anything the fast path
+// in writeNum() can't prove it rounds identically. Writes at most ~dp+540 bytes.
+char* writeNumExact(char* p, double num, int maxDecimals) {
     char buf[512];
 
     if (std::floor(num) == num) {
         auto r = std::to_chars(buf, buf + sizeof(buf), static_cast<int64_t>(num));
-        out.append(buf, static_cast<size_t>(r.ptr - buf));
-        return;
+        const size_t n = static_cast<size_t>(r.ptr - buf);
+        std::memcpy(p, buf, n);
+        return p + n;
     }
 
     if (maxDecimals < 0) maxDecimals = 6;   // what a negative precision means to printf
 
 #if defined(__cpp_lib_to_chars) && __cpp_lib_to_chars >= 201611L
     auto r = std::to_chars(buf, buf + sizeof(buf), num, std::chars_format::fixed, maxDecimals);
-    if (r.ec != std::errc()) { out += smartNumToStr(num, maxDecimals); return; }
+    if (r.ec != std::errc()) {
+        const std::string s = smartNumToStr(num, maxDecimals);
+        std::memcpy(p, s.data(), s.size());
+        return p + s.size();
+    }
     size_t len = static_cast<size_t>(r.ptr - buf);
 #else
     int n = std::snprintf(buf, sizeof(buf), "%.*f", maxDecimals, num);
-    if (n < 0 || n >= static_cast<int>(sizeof(buf))) { out += smartNumToStr(num, maxDecimals); return; }
+    if (n < 0 || n >= static_cast<int>(sizeof(buf))) {
+        const std::string s = smartNumToStr(num, maxDecimals);
+        std::memcpy(p, s.data(), s.size());
+        return p + s.size();
+    }
     size_t len = static_cast<size_t>(n);
 #endif
 
@@ -54,13 +77,59 @@ void appendNum(std::string& out, double num, int maxDecimals) {
         if (keep > 0 && keep - 1 > dotPos) len = keep;          // trim zeros after the dot
         if (buf[len - 1] == '.') --len;
     }
-    out.append(buf, len);
+    std::memcpy(p, buf, len);
+    return p + len;
 }
 
-inline void appendInt(std::string& out, int v) {
-    char buf[16];
-    auto r = std::to_chars(buf, buf + sizeof(buf), v);
-    out.append(buf, static_cast<size_t>(r.ptr - buf));
+// Same output as writeNumExact() for every input, but ~2x cheaper for the common case.
+//
+// Fast path: scale by 10^dp, round to an integer, and print the digits ourselves.
+// That multiply can be off by up to half an ulp, so when the fractional part lands
+// too close to .5 for us to know which way printf would round, we hand the number to
+// writeNumExact() instead. (Checked against ~39M awkward values - ties, 1 ulp either
+// side of ties, negatives, near-integers - with zero differences.)
+inline char* writeNum(char* p, double num, int dp) {
+    if (std::floor(num) == num) {
+        const int64_t iv = static_cast<int64_t>(num);
+        if (iv < 0) { *p++ = '-'; return writeU64(p, uint64_t(0) - static_cast<uint64_t>(iv)); }
+        return writeU64(p, static_cast<uint64_t>(iv));
+    }
+
+    const int d = (dp < 0) ? 6 : dp;
+    if (d >= 1 && d <= 9) {
+        const double v = std::fabs(num) * kPow10[d];
+        if (v < 1e15) {                                   // keeps v well inside 2^52 so v - floor(v) is exact
+            const double r   = std::floor(v);
+            const double f   = v - r;
+            const double eps = v * 4.5e-16 + 1e-9;        // generous bound on the multiply's error
+            if (std::fabs(f - 0.5) > eps) {
+                const uint64_t n  = static_cast<uint64_t>(r) + (f > 0.5 ? 1u : 0u);
+                const uint64_t sc = kPow10i[d];
+                uint64_t       fp = n % sc;
+
+                if (num < 0) *p++ = '-';
+                p = writeU64(p, n / sc);
+                *p++ = '.';
+
+                char fd[9];
+                for (int i = d - 1; i >= 0; --i) { fd[i] = static_cast<char>('0' + fp % 10); fp /= 10; }
+
+                // Trim trailing zeros - except when the whole fraction is zero, where the
+                // original leaves "N.000000" untouched (see the comment on writeNumExact).
+                int keep = d;
+                if (n % sc != 0) while (fd[keep - 1] == '0') --keep;
+                std::memcpy(p, fd, static_cast<size_t>(keep));
+                return p + keep;
+            }
+        }
+    }
+    return writeNumExact(p, num, dp);
+}
+
+inline char* writeInt(char* p, int v) {
+    if (v >= 0 && v < 10)  { *p++ = static_cast<char>('0' + v); return p; }
+    if (v >= 0 && v < 100) { *p++ = static_cast<char>('0' + v / 10); *p++ = static_cast<char>('0' + v % 10); return p; }
+    return std::to_chars(p, p + 16, v).ptr;
 }
 
 // Sorts v (made of consecutive pre-cut runs) by `cmp`: every run is sorted on its
@@ -116,25 +185,42 @@ void sortRuns(std::vector<ChartNote>& v, std::vector<size_t> starts, Cmp cmp) {
 size_t PsychConverter::writeJSON(std::ostream& out, const ChartNote* notes,
                                   const Section* first, const Section* last,
                                   double finalBPM) const {
-    // Flush to the stream whenever the buffer passes this (a few notes' worth of
-    // slack on top is fine). Keeps memory flat no matter how big the chart is -
-    // the old all-in-one string was ~25 bytes per note, ~1.7 GB for 67M notes.
+    // Flush to the stream whenever the buffer passes this. Keeps memory flat no
+    // matter how big the chart is - the old all-in-one string was ~25 bytes per
+    // note, ~1.7 GB for 67M notes.
     constexpr size_t kFlushAt = size_t(1) << 20;
 
     const int dp = m_config.decimalPlaces;
 
-    std::string json;
-    json.reserve(kFlushAt + 4096);
-    size_t written = 0;
-    auto flush = [&]() {
-        out.write(json.data(), static_cast<std::streamsize>(json.size()));
-        written += json.size();
-        json.clear();
-    };
+    // Everything below writes straight into a raw char buffer through a pointer, so
+    // there is no per-append capacity check / realloc branch like std::string has.
+    // That's only safe because we always leave `slack` spare bytes past kFlushAt:
+    // the biggest thing written between two flush checks is one note, one section
+    // tail, or the final footer. A number is at most ~(dp + 540) bytes (dp is user
+    // input, so size from it).
+    const size_t numMax = 24 + static_cast<size_t>(std::max(dp, 6)) + 512;
+    const size_t slack  = 2 * numMax + 256
+                        + m_config.songName.size() + m_config.p1Char.size()
+                        + m_config.p2Char.size()   + m_config.gfChar.size()
+                        + m_config.stage.size();
 
-    json += R"({"song":{"song":")";
-    json += m_config.songName;
-    json += R"(","notes":[)";
+    std::unique_ptr<char[]> store(new char[kFlushAt + slack]);
+    char* const base = store.get();
+    char*       p    = base;
+    size_t written   = 0;
+
+    auto flush = [&]() {
+        out.write(base, static_cast<std::streamsize>(p - base));
+        written += static_cast<size_t>(p - base);
+        p = base;
+    };
+    auto lit = [&](const char* s, size_t n) { std::memcpy(p, s, n); p += n; };
+    auto str = [&](const std::string& s)    { std::memcpy(p, s.data(), s.size()); p += s.size(); };
+#define M2P_LIT(s) lit(s, sizeof(s) - 1)
+
+    M2P_LIT("{\"song\":{\"song\":\"");
+    str(m_config.songName);
+    M2P_LIT("\",\"notes\":[");
 
     // One "step" is 1/4 beat (there are 16 steps per 4-beat section).
     // stepMs = (60000 / bpm) * 0.25 = 15000 / bpm
@@ -144,14 +230,12 @@ size_t PsychConverter::writeJSON(std::ostream& out, const ChartNote* notes,
     const double roundMul = doRound ? std::pow(10.0, m_config.roundTimesTo) : 1.0;
 
     for (const Section* s = first; s != last; ++s) {
-        if (s != first) json += ',';
-        json += R"({"sectionNotes":[)";
+        if (s != first) *p++ = ',';
+        M2P_LIT("{\"sectionNotes\":[");
 
-        bool firstNote = true;
         for (size_t i = s->firstNote; i < s->lastNote; ++i) {
             const ChartNote& n = notes[i];
-            if (!firstNote) json += ',';
-            firstNote = false;
+            if (i != s->firstNote) *p++ = ',';
 
             double time = n.time;
             double dur  = n.duration;
@@ -163,50 +247,53 @@ size_t PsychConverter::writeJSON(std::ostream& out, const ChartNote* notes,
 
             // Format: [ time, lane, holdLength, custom ]
             // custom (index 3) is currently unused (0) but reserved for later.
-            json += '[';
-            appendNum(json, time, dp);
-            json += ',';
-            appendInt(json, n.lane);
-            json += ',';
+            *p++ = '[';
+            p = writeNum(p, time, dp);
+            *p++ = ',';
+            p = writeInt(p, n.lane);
+            *p++ = ',';
 
             // Only emit a hold length if it is at least one step long
             if (dur >= stepMs) {
-                appendNum(json, dur, dp);
-                json += ",0]";
+                p = writeNum(p, dur, dp);
+                M2P_LIT(",0]");
             } else {
-                json += "0,0]";
+                M2P_LIT("0,0]");
             }
 
-            if (json.size() >= kFlushAt) flush();
+            if (static_cast<size_t>(p - base) >= kFlushAt) flush();
         }
 
-        json += R"(],"lengthInSteps":16,"mustHitSection":)";
-        json += s->mustHitSection ? "true" : "false";
-        json += R"(,"changeBPM":)";
-        json += s->changeBPM ? "true" : "false";
-        json += R"(,"bpm":)";
-        appendNum(json, s->bpm, dp);
-        json += '}';
+        M2P_LIT("],\"lengthInSteps\":16,\"mustHitSection\":");
+        if (s->mustHitSection) M2P_LIT("true"); else M2P_LIT("false");
+        M2P_LIT(",\"changeBPM\":");
+        if (s->changeBPM) M2P_LIT("true"); else M2P_LIT("false");
+        M2P_LIT(",\"bpm\":");
+        p = writeNum(p, s->bpm, dp);
+        *p++ = '}';
+
+        if (static_cast<size_t>(p - base) >= kFlushAt) flush();
     }
 
-    json += R"(],"bpm":)";
-    appendNum(json, finalBPM, dp);
-    json += R"(,"needsVoices":true,"speed":)";
-    appendNum(json, m_config.speed, dp);
+    M2P_LIT("],\"bpm\":");
+    p = writeNum(p, finalBPM, dp);
+    M2P_LIT(",\"needsVoices\":true,\"speed\":");
+    p = writeNum(p, m_config.speed, dp);
 
-    json += R"(,"player1":")";    json += m_config.p1Char;
-    json += R"(","player2":")";   json += m_config.p2Char;
-    json += R"(","gfVersion":")"; json += m_config.gfChar;
-    json += R"(","stage":")";     json += m_config.stage;
-    json += '"';
+    M2P_LIT(",\"player1\":\"");    str(m_config.p1Char);
+    M2P_LIT("\",\"player2\":\"");   str(m_config.p2Char);
+    M2P_LIT("\",\"gfVersion\":\""); str(m_config.gfChar);
+    M2P_LIT("\",\"stage\":\"");     str(m_config.stage);
+    *p++ = '"';
 
     if (m_config.mania != 3) {
-        json += R"(,"mania":)";
-        appendInt(json, m_config.mania);
+        M2P_LIT(",\"mania\":");
+        p = writeInt(p, m_config.mania);
     }
 
-    json += R"(,"validScore":true}})";
+    M2P_LIT(",\"validScore\":true}}");
     flush();
+#undef M2P_LIT
     return written;
 }
 
