@@ -132,6 +132,33 @@ inline char* writeInt(char* p, int v) {
     return std::to_chars(p, p + 16, v).ptr;
 }
 
+// Escapes a string for use between the quotes of a JSON string literal: quotes,
+// backslashes and control characters. Everything else (including UTF-8) passes through.
+std::string jsonEscape(const std::string& in) {
+    std::string out;
+    out.reserve(in.size() + 8);
+    for (const unsigned char c : in) {
+        switch (c) {
+            case '"':  out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n";  break;
+            case '\r': out += "\\r";  break;
+            case '\t': out += "\\t";  break;
+            case '\b': out += "\\b";  break;
+            case '\f': out += "\\f";  break;
+            default:
+                if (c < 0x20) {
+                    char b[8];
+                    std::snprintf(b, sizeof(b), "\\u%04x", c);
+                    out += b;
+                } else {
+                    out += static_cast<char>(c);
+                }
+        }
+    }
+    return out;
+}
+
 // Sorts [first, last) by `cmp`, which must order by tick first.
 //
 // A MIDI track is in tick order by construction, so a run built from one is usually
@@ -220,6 +247,14 @@ size_t PsychConverter::writeJSON(std::ostream& out, const ChartNote* notes,
 
     const int dp = m_config.decimalPlaces;
 
+    // User-supplied text has to be escaped or a name like  My "Cool" Song  breaks the file.
+    const std::string escSongName = jsonEscape(m_config.songName);
+    const std::string escP1Char   = jsonEscape(m_config.p1Char);
+    const std::string escP2Char   = jsonEscape(m_config.p2Char);
+    const std::string escGfChar   = jsonEscape(m_config.gfChar);
+    const std::string escStage    = jsonEscape(m_config.stage);
+
+
     // Everything below writes straight into a raw char buffer through a pointer, so
     // there is no per-append capacity check / realloc branch like std::string has.
     // That's only safe because we always leave `slack` spare bytes past kFlushAt:
@@ -228,9 +263,9 @@ size_t PsychConverter::writeJSON(std::ostream& out, const ChartNote* notes,
     // input, so size from it).
     const size_t numMax = 24 + static_cast<size_t>(std::max(dp, 6)) + 512;
     const size_t slack  = 2 * numMax + 256
-                        + m_config.songName.size() + m_config.p1Char.size()
-                        + m_config.p2Char.size()   + m_config.gfChar.size()
-                        + m_config.stage.size();
+                        + escSongName.size() + escP1Char.size()
+                        + escP2Char.size()   + escGfChar.size()
+                        + escStage.size();
 
     std::unique_ptr<char[]> store(new char[kFlushAt + slack]);
     char* const base = store.get();
@@ -247,7 +282,7 @@ size_t PsychConverter::writeJSON(std::ostream& out, const ChartNote* notes,
 #define M2P_LIT(s) lit(s, sizeof(s) - 1)
 
     M2P_LIT("{\"song\":{\"song\":\"");
-    str(m_config.songName);
+    str(escSongName);
     M2P_LIT("\",\"notes\":[");
 
     // One "step" is 1/4 beat (there are 16 steps per 4-beat section).
@@ -308,10 +343,10 @@ size_t PsychConverter::writeJSON(std::ostream& out, const ChartNote* notes,
     M2P_LIT(",\"needsVoices\":true,\"speed\":");
     p = writeNum(p, m_config.speed, dp);
 
-    M2P_LIT(",\"player1\":\"");    str(m_config.p1Char);
-    M2P_LIT("\",\"player2\":\"");   str(m_config.p2Char);
-    M2P_LIT("\",\"gfVersion\":\""); str(m_config.gfChar);
-    M2P_LIT("\",\"stage\":\"");     str(m_config.stage);
+    M2P_LIT(",\"player1\":\"");    str(escP1Char);
+    M2P_LIT("\",\"player2\":\"");   str(escP2Char);
+    M2P_LIT("\",\"gfVersion\":\""); str(escGfChar);
+    M2P_LIT("\",\"stage\":\"");     str(escStage);
     *p++ = '"';
 
     if (m_config.mania != 3) {
