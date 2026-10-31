@@ -3,13 +3,16 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <exception>
 #include <fstream>
 #include <future>
 #include <iomanip>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <thread>
 
@@ -132,6 +135,35 @@ inline char* writeInt(char* p, int v) {
     return std::to_chars(p, p + 16, v).ptr;
 }
 
+// ─── Parallel JSON writing: tuning knobs ──────────────────────────────────────
+
+// Notes per formatting task (~1 MB of output). Big enough that thread hand-off is noise,
+// small enough that a chart splits into plenty of tasks to keep every core busy.
+// (M2P_TASK_NOTES / M2P_WRITER_THREADS are compile-time overrides used only for testing.)
+#ifdef M2P_TASK_NOTES
+constexpr size_t kTaskNotes = M2P_TASK_NOTES;
+#else
+constexpr size_t kTaskNotes = 32768;
+#endif
+
+inline unsigned writerThreadCount() {
+#ifdef M2P_WRITER_THREADS
+    return M2P_WRITER_THREADS;
+#else
+    const unsigned hw = std::thread::hardware_concurrency();
+    return hw ? hw : 1;
+#endif
+}
+
+// A slice of one section: notes [i0, i1) of `s`. `head` = this piece opens the section's
+// object, `tail` = it closes it. A section that is too big for one task becomes several
+// pieces; a tiny one is a single piece with both flags set.
+struct JsonPiece {
+    const Section* s;
+    size_t i0, i1;
+    bool head, tail, firstSection;
+};
+
 // Escapes a string for use between the quotes of a JSON string literal: quotes,
 // backslashes and control characters. Everything else (including UTF-8) passes through.
 std::string jsonEscape(const std::string& in) {
@@ -240,11 +272,6 @@ void sortRuns(std::vector<ChartNote>& v, std::vector<size_t> starts, Cmp cmp) {
 size_t PsychConverter::writeJSON(std::ostream& out, const ChartNote* notes,
                                   const Section* first, const Section* last,
                                   double finalBPM) const {
-    // Flush to the stream whenever the buffer passes this. Keeps memory flat no
-    // matter how big the chart is - the old all-in-one string was ~25 bytes per
-    // note, ~1.7 GB for 67M notes.
-    constexpr size_t kFlushAt = size_t(1) << 20;
-
     const int dp = m_config.decimalPlaces;
 
     // User-supplied text has to be escaped or a name like  My "Cool" Song  breaks the file.
@@ -254,36 +281,13 @@ size_t PsychConverter::writeJSON(std::ostream& out, const ChartNote* notes,
     const std::string escGfChar   = jsonEscape(m_config.gfChar);
     const std::string escStage    = jsonEscape(m_config.stage);
 
-
-    // Everything below writes straight into a raw char buffer through a pointer, so
-    // there is no per-append capacity check / realloc branch like std::string has.
-    // That's only safe because we always leave `slack` spare bytes past kFlushAt:
-    // the biggest thing written between two flush checks is one note, one section
-    // tail, or the final footer. A number is at most ~(dp + 540) bytes (dp is user
-    // input, so size from it).
+    // Formatting writes straight into a raw char buffer through a pointer (no per-append
+    // capacity check like std::string has). That's only safe because the buffer always has
+    // `slack` spare bytes past kChunk: the most written between two flush checks is one note
+    // or one section tail. A number is at most ~(dp + 540) bytes (dp is user input).
     const size_t numMax = 24 + static_cast<size_t>(std::max(dp, 6)) + 512;
-    const size_t slack  = 2 * numMax + 256
-                        + escSongName.size() + escP1Char.size()
-                        + escP2Char.size()   + escGfChar.size()
-                        + escStage.size();
-
-    std::unique_ptr<char[]> store(new char[kFlushAt + slack]);
-    char* const base = store.get();
-    char*       p    = base;
-    size_t written   = 0;
-
-    auto flush = [&]() {
-        out.write(base, static_cast<std::streamsize>(p - base));
-        written += static_cast<size_t>(p - base);
-        p = base;
-    };
-    auto lit = [&](const char* s, size_t n) { std::memcpy(p, s, n); p += n; };
-    auto str = [&](const std::string& s)    { std::memcpy(p, s.data(), s.size()); p += s.size(); };
-#define M2P_LIT(s) lit(s, sizeof(s) - 1)
-
-    M2P_LIT("{\"song\":{\"song\":\"");
-    str(escSongName);
-    M2P_LIT("\",\"notes\":[");
+    const size_t slack  = 2 * numMax + 256;
+    constexpr size_t kChunk = size_t(1) << 18;
 
     // One "step" is 1/4 beat (there are 16 steps per 4-beat section).
     // stepMs = (60000 / bpm) * 0.25 = 15000 / bpm
@@ -292,71 +296,240 @@ size_t PsychConverter::writeJSON(std::ostream& out, const ChartNote* notes,
     const bool   doRound  = (m_config.roundTimesTo >= 0);
     const double roundMul = doRound ? std::pow(10.0, m_config.roundTimesTo) : 1.0;
 
-    for (const Section* s = first; s != last; ++s) {
-        if (s != first) *p++ = ',';
-        M2P_LIT("{\"sectionNotes\":[");
+    // ── Cut the chart into tasks of ~kTaskNotes notes each ────────────────
+    // Every task formats independently of the others (a section's leading comma is the
+    // only thing that depends on position, and that's known up front), so tasks can be
+    // formatted on any thread and just have to be *written* in order.
+    std::vector<JsonPiece>                 pieces;
+    std::vector<std::pair<size_t, size_t>> tasks;   // [begin, end) into `pieces`
+    {
+        size_t taskBegin = 0, cur = 0;
+        for (const Section* s = first; s != last; ++s) {
+            size_t pos  = s->firstNote;
+            bool   head = true;
+            do {
+                const size_t take = std::min(s->lastNote - pos, kTaskNotes - cur);
+                const bool   tail = (pos + take == s->lastNote);
+                pieces.push_back({s, pos, pos + take, head, tail, s == first});
+                cur += take;
+                pos += take;
+                head = false;
+                if (cur >= kTaskNotes) {
+                    tasks.emplace_back(taskBegin, pieces.size());
+                    taskBegin = pieces.size();
+                    cur = 0;
+                }
+            } while (pos < s->lastNote);
+        }
+        if (taskBegin < pieces.size()) tasks.emplace_back(taskBegin, pieces.size());
+    }
 
-        for (size_t i = s->firstNote; i < s->lastNote; ++i) {
-            const ChartNote& n = notes[i];
-            if (i != s->firstNote) *p++ = ',';
+    // ── Formats one task into `dst` (appends). `base` is the caller's scratch buffer
+    //    of kChunk + slack bytes. ──────────────────────────────────────────────
+    auto renderTask = [&](size_t t, char* base, std::string& dst) {
+        char* p = base;
+        auto flushTo = [&]() { dst.append(base, static_cast<size_t>(p - base)); p = base; };
+        auto lit     = [&](const char* s, size_t n) { std::memcpy(p, s, n); p += n; };
+#define M2P_LIT(s) lit(s, sizeof(s) - 1)
 
-            double time = n.time;
-            double dur  = n.duration;
+        for (size_t k = tasks[t].first; k < tasks[t].second; ++k) {
+            const JsonPiece& pc = pieces[k];
+            const Section*   s  = pc.s;
 
-            if (doRound) {
-                time = std::round(time * roundMul) / roundMul;
-                dur  = std::round(dur  * roundMul) / roundMul;
+            if (pc.head) {
+                if (!pc.firstSection) *p++ = ',';
+                M2P_LIT("{\"sectionNotes\":[");
             }
 
-            // Format: [ time, lane, holdLength, custom ]
-            // custom (index 3) is currently unused (0) but reserved for later.
-            *p++ = '[';
-            p = writeNum(p, time, dp);
-            *p++ = ',';
-            p = writeInt(p, n.lane);
-            *p++ = ',';
+            for (size_t i = pc.i0; i < pc.i1; ++i) {
+                const ChartNote& n = notes[i];
+                if (i != s->firstNote) *p++ = ',';
 
-            // Only emit a hold length if it is at least one step long
-            if (dur >= stepMs) {
-                p = writeNum(p, dur, dp);
-                M2P_LIT(",0]");
-            } else {
-                M2P_LIT("0,0]");
+                double time = n.time;
+                double dur  = n.duration;
+
+                if (doRound) {
+                    time = std::round(time * roundMul) / roundMul;
+                    dur  = std::round(dur  * roundMul) / roundMul;
+                }
+
+                // Format: [ time, lane, holdLength, custom ]
+                // custom (index 3) is currently unused (0) but reserved for later.
+                *p++ = '[';
+                p = writeNum(p, time, dp);
+                *p++ = ',';
+                p = writeInt(p, n.lane);
+                *p++ = ',';
+
+                // Only emit a hold length if it is at least one step long
+                if (dur >= stepMs) {
+                    p = writeNum(p, dur, dp);
+                    M2P_LIT(",0]");
+                } else {
+                    M2P_LIT("0,0]");
+                }
+
+                if (static_cast<size_t>(p - base) >= kChunk) flushTo();
             }
 
-            if (static_cast<size_t>(p - base) >= kFlushAt) flush();
+            if (pc.tail) {
+                M2P_LIT("],\"lengthInSteps\":16,\"mustHitSection\":");
+                if (s->mustHitSection) M2P_LIT("true"); else M2P_LIT("false");
+                M2P_LIT(",\"changeBPM\":");
+                if (s->changeBPM) M2P_LIT("true"); else M2P_LIT("false");
+                M2P_LIT(",\"bpm\":");
+                p = writeNum(p, s->bpm, dp);
+                *p++ = '}';
+                if (static_cast<size_t>(p - base) >= kChunk) flushTo();
+            }
+        }
+#undef M2P_LIT
+        flushTo();
+    };
+
+    // Rough output size of a task, so its string is allocated once.
+    auto taskReserve = [&](size_t t) {
+        size_t cnt = 0;
+        for (size_t k = tasks[t].first; k < tasks[t].second; ++k) cnt += pieces[k].i1 - pieces[k].i0;
+        return cnt * 28 + 512;
+    };
+
+    // ── Header / footer (tiny, built once) ────────────────────────────────
+    auto appendNum = [&](std::string& dst, double v) {
+        std::unique_ptr<char[]> nb(new char[numMax]);
+        dst.append(nb.get(), static_cast<size_t>(writeNum(nb.get(), v, dp) - nb.get()));
+    };
+    auto appendInt = [](std::string& dst, int v) {
+        char nb[16];
+        dst.append(nb, static_cast<size_t>(writeInt(nb, v) - nb));
+    };
+
+    std::string header = "{\"song\":{\"song\":\"" + escSongName + "\",\"notes\":[";
+
+    std::string footer = "],\"bpm\":";
+    appendNum(footer, finalBPM);
+    footer += ",\"needsVoices\":true,\"speed\":";
+    appendNum(footer, m_config.speed);
+    footer += ",\"player1\":\"";    footer += escP1Char;
+    footer += "\",\"player2\":\"";   footer += escP2Char;
+    footer += "\",\"gfVersion\":\""; footer += escGfChar;
+    footer += "\",\"stage\":\"";     footer += escStage;
+    footer += '"';
+    if (m_config.mania != 3) {
+        footer += ",\"mania\":";
+        appendInt(footer, m_config.mania);
+    }
+    footer += ",\"validScore\":true}}";
+
+    // ── Write it all out ──────────────────────────────────────────────────
+    size_t written = 0;
+    auto put = [&](const std::string& s) {
+        out.write(s.data(), static_cast<std::streamsize>(s.size()));
+        written += s.size();
+    };
+
+    put(header);
+
+    const size_t T = tasks.size();
+
+    // Worker pool: workers grab the next task number, format it into their own string, and
+    // park it in results[t]. The calling thread writes results in order. `window` caps how
+    // many tasks may be formatted ahead of the one being written, so memory stays flat
+    // however big the chart is.
+    std::mutex              m;
+    std::condition_variable cvWork, cvDone;
+    std::vector<std::string> results(T);
+    std::vector<char>        ready(T, 0);
+    size_t                   next = 0, consumed = 0;
+    bool                     stop = false;
+    std::exception_ptr       err;
+
+    const unsigned nThreads  = static_cast<unsigned>(std::min<size_t>(writerThreadCount(), T));
+    const size_t   window    = 2 * static_cast<size_t>(nThreads) + 2;
+
+    auto worker = [&]() {
+        try {
+            std::unique_ptr<char[]> base(new char[kChunk + slack]);
+            for (;;) {
+                size_t t;
+                {
+                    std::unique_lock<std::mutex> lk(m);
+                    cvWork.wait(lk, [&] { return stop || next >= T || next < consumed + window; });
+                    if (stop || next >= T) return;
+                    t = next++;
+                }
+                std::string dst;
+                dst.reserve(taskReserve(t));
+                renderTask(t, base.get(), dst);
+                {
+                    std::lock_guard<std::mutex> lk(m);
+                    results[t] = std::move(dst);
+                    ready[t]   = 1;
+                }
+                cvDone.notify_all();
+            }
+        } catch (...) {
+            {
+                std::lock_guard<std::mutex> lk(m);
+                if (!err) err = std::current_exception();
+                stop = true;
+            }
+            cvDone.notify_all();
+            cvWork.notify_all();
+        }
+    };
+
+    // Stops and joins the pool however we leave this block (including by exception).
+    struct PoolGuard {
+        std::mutex& m; std::condition_variable& cv; bool& stop; std::vector<std::thread>& pool;
+        ~PoolGuard() {
+            { std::lock_guard<std::mutex> lk(m); stop = true; }
+            cv.notify_all();
+            for (auto& th : pool) if (th.joinable()) th.join();
+        }
+    };
+
+    {
+        std::vector<std::thread> pool;
+        PoolGuard guard{m, cvWork, stop, pool};
+
+        if (nThreads > 1) {
+            try {
+                for (unsigned i = 0; i < nThreads; ++i) pool.emplace_back(worker);
+            } catch (...) { /* couldn't start them all: use whatever did start (maybe none) */ }
         }
 
-        M2P_LIT("],\"lengthInSteps\":16,\"mustHitSection\":");
-        if (s->mustHitSection) M2P_LIT("true"); else M2P_LIT("false");
-        M2P_LIT(",\"changeBPM\":");
-        if (s->changeBPM) M2P_LIT("true"); else M2P_LIT("false");
-        M2P_LIT(",\"bpm\":");
-        p = writeNum(p, s->bpm, dp);
-        *p++ = '}';
+        if (pool.empty()) {
+            // Single core (or threads unavailable): same code, just on this thread.
+            std::unique_ptr<char[]> base(new char[kChunk + slack]);
+            std::string dst;
+            for (size_t t = 0; t < T; ++t) {
+                dst.clear();
+                dst.reserve(taskReserve(t));
+                renderTask(t, base.get(), dst);
+                put(dst);
+                if (!out) break;
+            }
+        } else {
+            for (size_t t = 0; t < T; ++t) {
+                std::string chunk;
+                {
+                    std::unique_lock<std::mutex> lk(m);
+                    cvDone.wait(lk, [&] { return ready[t] || stop; });
+                    if (!ready[t]) break;                // a worker failed
+                    chunk    = std::move(results[t]);
+                    consumed = t + 1;
+                }
+                cvWork.notify_all();                     // the window moved: let workers continue
+                put(chunk);
+                if (!out) break;                         // disk error: no point formatting more
+            }
+        }
+    }   // pool stopped and joined here
 
-        if (static_cast<size_t>(p - base) >= kFlushAt) flush();
-    }
+    if (err) std::rethrow_exception(err);
 
-    M2P_LIT("],\"bpm\":");
-    p = writeNum(p, finalBPM, dp);
-    M2P_LIT(",\"needsVoices\":true,\"speed\":");
-    p = writeNum(p, m_config.speed, dp);
-
-    M2P_LIT(",\"player1\":\"");    str(escP1Char);
-    M2P_LIT("\",\"player2\":\"");   str(escP2Char);
-    M2P_LIT("\",\"gfVersion\":\""); str(escGfChar);
-    M2P_LIT("\",\"stage\":\"");     str(escStage);
-    *p++ = '"';
-
-    if (m_config.mania != 3) {
-        M2P_LIT(",\"mania\":");
-        p = writeInt(p, m_config.mania);
-    }
-
-    M2P_LIT(",\"validScore\":true}}");
-    flush();
-#undef M2P_LIT
+    put(footer);
     return written;
 }
 

@@ -140,8 +140,9 @@ private:
         m_config.mania = std::max(0, std::min(m_config.mania, 69420));
     }
 
-    // Stream the sections [first, last) as Psych-Engine JSON into `out`, using a small
-    // reusable buffer (the whole file is never held in memory as one string).
+    // Stream the sections [first, last) as Psych-Engine JSON into `out`. Chunks of the chart
+    // are formatted on several threads and written in order, with only a few chunks in
+    // flight at once (the whole file is never held in memory).
     // `notes` is the chart's note array the sections point into. Returns bytes written.
     size_t writeJSON(std::ostream& out, const ChartNote* notes,
                      const Section* first, const Section* last, double finalBPM) const;
