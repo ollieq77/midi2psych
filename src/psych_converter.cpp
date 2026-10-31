@@ -132,14 +132,42 @@ inline char* writeInt(char* p, int v) {
     return std::to_chars(p, p + 16, v).ptr;
 }
 
+// Sorts [first, last) by `cmp`, which must order by tick first.
+//
+// A MIDI track is in tick order by construction, so a run built from one is usually
+// already sorted by tick, with only the notes that share a tick out of order (chords).
+// One linear scan then fixes just those tiny equal-tick blocks, instead of paying
+// O(n log n) over tens of millions of notes. The moment the scan sees a tick go
+// backwards (e.g. sustain mode emits notes at their note-off), it gives up and does
+// the full sort, so the result is always the same as std::sort(first, last, cmp).
+// (Notes that compare equal under cmp are identical in every field, so the output
+// can't depend on which algorithm ordered them.)
+template <class It, class Cmp>
+void sortRun(It first, It last, Cmp cmp) {
+    if (last - first < 2) return;
+
+    It blockStart = first;
+    for (It it = first + 1; it != last; ++it) {
+        if (it->tick == blockStart->tick) continue;
+        if (it->tick < blockStart->tick) {            // not tick-ordered: do it the slow way
+            std::sort(first, last, cmp);
+            return;
+        }
+        if (it - blockStart > 1) std::sort(blockStart, it, cmp);
+        blockStart = it;
+    }
+    if (last - blockStart > 1) std::sort(blockStart, last, cmp);
+}
+
 // Sorts v (made of consecutive pre-cut runs) by `cmp`: every run is sorted on its
 // own - several at once on multi-core machines - and then neighbouring runs are
 // merged pairwise. `starts` holds each run's first index plus v.size() at the end.
 // Way cheaper than one big sort when the input is already chunked by MIDI track.
+// `cmp` must order by tick first (see sortRun).
 template <class Cmp>
 void sortRuns(std::vector<ChartNote>& v, std::vector<size_t> starts, Cmp cmp) {
     if (starts.size() <= 2) {   // zero or one run: nothing to merge
-        std::sort(v.begin(), v.end(), cmp);
+        sortRun(v.begin(), v.end(), cmp);
         return;
     }
 
@@ -159,7 +187,7 @@ void sortRuns(std::vector<ChartNote>& v, std::vector<size_t> starts, Cmp cmp) {
     };
 
     runAll(starts.size() - 1, [&](size_t r) {
-        std::sort(v.begin() + starts[r], v.begin() + starts[r + 1], cmp);
+        sortRun(v.begin() + starts[r], v.begin() + starts[r + 1], cmp);
     });
 
     while (starts.size() > 2) {
